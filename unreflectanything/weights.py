@@ -7,7 +7,7 @@ import sys
 from pathlib import Path
 
 # Default Hugging Face repo for weights (override with UNREFLECTANYTHING_WEIGHTS_REPO)
-DEFAULT_WEIGHTS_REPO = "alberto-rota/UnReflectAnything-weights"
+DEFAULT_WEIGHTS_REPO = "AlbeRota/UnReflectAnything"
 
 
 def get_weights_cache_dir() -> Path:

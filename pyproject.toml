@@ -20,12 +20,11 @@ authors = [
 maintainers = [
   {name = "Alberto Rota", email = "alberto1.rota@polimi.it"}
 ]
-license = {text = "MIT"}
+license = "MIT"
 keywords = ["computer vision", "specular removal", "reflection removal", "deep learning"]
 classifiers = [
   "Development Status :: 3 - Alpha",
   "Intended Audience :: Science/Research",
-  "License :: Other/Proprietary License",
   "Programming Language :: Python",
   "Programming Language :: Python :: 3",
   "Programming Language :: Python :: 3 :: Only",
@@ -52,6 +51,8 @@ dependencies = [
 
 [project.scripts]
 unreflectanything = "unreflectanything.cli:main"
+unreflect = "unreflectanything.cli:main"
+ura = "unreflectanything.cli:main"
 
 [project.optional-dependencies]
 dev = ["build>=1.2", "twine>=5.1"]
@@ -61,6 +62,12 @@ weights = ["huggingface_hub>=0.20"]
 Homepage = "https://github.com/alberto-rota/UnReflectAnything"
 Repository = "https://github.com/alberto-rota/UnReflectAnything"
 Issues = "https://github.com/alberto-rota/UnReflectAnything/issues"
+
+[[tool.uv.index]]
+name = "testpypi"
+url = "https://test.pypi.org/simple/"
+publish-url = "https://test.pypi.org/legacy/"
+explicit = true
 
 [tool.setuptools]
 include-package-data = true

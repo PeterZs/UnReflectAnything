@@ -1,4 +1,4 @@
-# Zsh completion for unreflectanything
+# Zsh completion for unreflectanything / unreflect / ura
 # Source: source <(unreflectanything completion zsh)
 
 _unreflectanything() {
@@ -10,4 +10,4 @@ _unreflectanything() {
         '*::args: _normal'
 }
 
-(( $+functions[_unreflectanything] )) && compdef _unreflectanything unreflectanything
+(( $+functions[_unreflectanything] )) && compdef _unreflectanything unreflectanything unreflect ura

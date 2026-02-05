@@ -1,4 +1,4 @@
-# Bash completion for unreflectanything
+# Bash completion for unreflectanything / unreflect / ura
 # Source: source <(unreflectanything completion bash)
 
 _unreflectanything() {
@@ -8,4 +8,4 @@ _unreflectanything() {
     COMPREPLY=($(compgen -W "$subcommands $options" -- "$cur"))
 }
 
-complete -F _unreflectanything unreflectanything
+complete -F _unreflectanything unreflectanything unreflect ura

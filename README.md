@@ -46,7 +46,7 @@ For the download command to work, install the optional dependency: `pip install 
 
 ## CLI usage
 
-After installation you get the `unreflectanything` command:
+After installation you get the `unreflectanything` command (aliases: `unreflect`, `ura`; all three do the same thing). For development, use `pip install -e .` so the same entry points work from the repo.
 
 | Subcommand | Description |
 |------------|-------------|

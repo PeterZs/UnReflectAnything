@@ -10,21 +10,6 @@ Public API:
 
 from __future__ import annotations
 
-# Re-export main pipeline entry point
-import main as _main
-
-run_pipeline = _main.run_pipeline
-
-# Re-export inference API
-from inference import (
-    InferenceOptions,
-    compute_highlight_mask,
-    run_inference,
-)
-
-# Optional: high-level helper for running inference from paths (uses default/cache weights)
-from unreflectanything.weights import get_weights_cache_dir
-
 __all__ = [
     "run_pipeline",
     "run_inference",
@@ -32,3 +17,23 @@ __all__ = [
     "compute_highlight_mask",
     "get_weights_cache_dir",
 ]
+
+
+def __getattr__(name: str):
+    """Lazy imports so that `import unreflectanything` and CLI --help stay fast."""
+    if name == "run_pipeline":
+        import main as _main
+        return _main.run_pipeline
+    if name == "InferenceOptions":
+        from inference import InferenceOptions
+        return InferenceOptions
+    if name == "compute_highlight_mask":
+        from inference import compute_highlight_mask
+        return compute_highlight_mask
+    if name == "run_inference":
+        from inference import run_inference
+        return run_inference
+    if name == "get_weights_cache_dir":
+        from unreflectanything.weights import get_weights_cache_dir
+        return get_weights_cache_dir
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

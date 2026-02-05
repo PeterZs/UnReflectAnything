@@ -202,7 +202,7 @@ def get_norms(params):
 
 
 import torch
-from google.cloud import storage
+# from google.cloud import storage
 
 
 class EarlyStopping:
@@ -251,14 +251,14 @@ class EarlyStopping:
         else:
             self.bucket_name = bucket_name
 
-        if self.bucket_name:
-            try:
-                self.storage_client = storage.Client()
-                self.bucket = self.storage_clientcket(self.bucket_name)
-            except Exception as e:
-                self.bucket = None
-        else:
-            self.bucket = None
+        # if self.bucket_name:
+        #     try:
+        #         # # self.storage_client = storage.Client()
+        #         # self.bucket = self.storage_clientcket(self.bucket_name)
+        #     except Exception as e:
+        #         self.bucket = None
+        # else:
+        self.bucket = None
 
         # Create checkpoint directory if it doesn't exist
         os.makedirs(checkpointpath, exist_ok=True)

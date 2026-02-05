@@ -3,8 +3,59 @@
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 from pathlib import Path
+
+
+def _config_path() -> Path | None:
+    """Path to the single CLI messages config: env UNREFLECTANYTHING_CLI_MESSAGES or cwd/assets/cli_messages.json."""
+    import os
+    if os.environ.get("UNREFLECTANYTHING_CLI_MESSAGES"):
+        p = Path(os.environ["UNREFLECTANYTHING_CLI_MESSAGES"])
+        if p.is_file():
+            return p
+    p = Path.cwd() / "assets" / "cli_messages.json"
+    return p if p.is_file() else None
+
+
+def _print_subcommand_startup_message(subcommand: str | None) -> None:
+    """Print optional banner and, when subcommand is set, a short startup line (stdlib-only, no heavy imports).
+
+    Config: single file from _config_path() (env or cwd/assets/cli_messages.json).
+    - "banner": path string (e.g. "project_ascii_banner.txt" next to config) or list of lines.
+    - "show_banner_for": subcommand names that get the banner; use "help" to show banner for main --help.
+    - Per-subcommand keys (e.g. "train") are the one-line message printed after the banner.
+    When subcommand is None (main help), only the banner is considered (if "help" in show_banner_for).
+    """
+    config_path = _config_path()
+    if not config_path:
+        return
+    try:
+        data = json.loads(config_path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return
+    show_banner_for = data.get("show_banner_for") or []
+    show_banner = (subcommand is None and "help" in show_banner_for) or (
+        subcommand is not None and subcommand in show_banner_for
+    )
+    if show_banner:
+        banner = data.get("banner")
+        if banner is not None:
+            if isinstance(banner, list):
+                for line in banner:
+                    print(line, flush=True)
+            else:
+                config_dir = config_path.parent
+                banner_path = (config_dir / banner) if not Path(banner).is_absolute() else Path(banner)
+                if not banner_path.is_file():
+                    banner_path = Path.cwd() / banner
+                if banner_path.is_file():
+                    print(banner_path.read_text(encoding="utf-8"), end="\n\n", flush=True)
+    if subcommand is not None:
+        msg = data.get(subcommand)
+        if isinstance(msg, str) and msg:
+            print(msg, flush=True)
 
 
 def _run_train(args: argparse.Namespace) -> None:
@@ -88,9 +139,9 @@ def _run_download_weights(args: argparse.Namespace) -> None:
 
 
 def main() -> None:
-    """Entry point for the unreflectanything console script."""
+    """Entry point for the unreflectanything / unreflect / ura console script."""
     parser = argparse.ArgumentParser(
-        prog="unreflectanything",
+        prog=Path(sys.argv[0]).name or "unreflectanything",
         description="UnReflectAnything: remove specular reflections from RGB images.",
     )
     subparsers = parser.add_subparsers(dest="subcommand", metavar="SUBCOMMAND", required=True)
@@ -162,10 +213,15 @@ def main() -> None:
     )
     p_dl.set_defaults(func=_run_download_weights)
 
+    # Banner for main help (no subcommand): show before parsing so it appears before --help output
+    if len(sys.argv) <= 2 and (len(sys.argv) == 1 or sys.argv[1] in ("-h", "--help")):
+        _print_subcommand_startup_message(None)
+
     args = parser.parse_args()
     if args.subcommand is None:
         parser.print_help()
         sys.exit(1)
+    _print_subcommand_startup_message(args.subcommand)
     # Resolve output_dir for download-weights
     if args.subcommand == "download-weights" and args.output_dir is None:
         from unreflectanything.weights import get_weights_cache_dir
