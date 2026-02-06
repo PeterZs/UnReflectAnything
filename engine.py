@@ -1727,7 +1727,7 @@ class Engine:
         """
         if checkpoint_path is None:
             # Try to load best model
-            checkpoint_path = os.path.join(self.MODELS_DIR, "weights_best.pt")
+            checkpoint_path = os.path.join(self.MODELS_DIR, "full_model_weights.pt")
 
         if not os.path.exists(checkpoint_path):
             self.logger.warning(

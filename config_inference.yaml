@@ -1,7 +1,7 @@
 # weights_path: run "unreflectanything download-weights" then use ~/.cache/unreflectanything/weights/ (or set path below)
 run: "gallant-bush-806"
 runs_dir: "/anvme/workspace/v120bb18-unreflectanything/runs"
-weights_path: "/anvme/workspace/v120bb18-unreflectanything/results/gallant-bush-806/models/weights_best.pt"
+weights_path: "/anvme/workspace/v120bb18-unreflectanything/results/gallant-bush-806/models/full_model_weights.pt"
 
 model_config_path: "/anvme/workspace/v120bb18-unreflectanything/config_train.yaml"
 model_module: "models"

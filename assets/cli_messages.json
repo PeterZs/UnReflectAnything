@@ -1,6 +1,6 @@
 {
   "banner": "project_ascii_banner.txt",
-  "show_banner_for": ["train", "test", "inference","help"],
+  "show_banner_for": ["cite","help"],
   "train": "Loading training pipeline and dependencies...",
   "test": "Loading evaluation pipeline and dependencies...",
   "inference": "Loading inference pipeline and model...",

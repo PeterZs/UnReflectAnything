@@ -306,6 +306,7 @@ def _run_completion(args: argparse.Namespace) -> None:
     """Print shell completion script."""
     try:
         from importlib.resources import files
+        from rich import print
         pkg = files("unreflectanything")
     except Exception:
         import importlib.resources
@@ -313,11 +314,29 @@ def _run_completion(args: argparse.Namespace) -> None:
     shell = (args.shell or "").strip().lower()
     if "zsh" in shell:
         path = pkg / "data" / "unreflect-completion.zsh"
+        print(
+              """\nRun the following command to load the completion script
+
+[cyan]echo 'source <(unreflectanything completion zsh)' >> ~/.zshrc[/]
+
+[white]It will append the following lines to your ~/.zshrc file:\n
+------------------------------------------------------------------------------------------------
+""",end=""
+)
     else:
         path = pkg / "data" / "unreflect-completion.bash"
+        print(
+              """\nRun the following command to load the completion script
+
+[cyan]echo 'source <(unreflectanything completion bash)' >> ~/.bashrc[/]
+
+[white]It will append the following lines to your ~/.bashrc file:\n
+------------------------------------------------------------------------------------------------
+""",end=""
+)
     text = path.read_text(encoding="utf-8")
     print(text, end="")
-
+    print("------------------------------------------------------------------------------------------------")
 
 # =============================================================================
 # Main Entry Point

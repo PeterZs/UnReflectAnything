@@ -295,7 +295,7 @@ class EarlyStopping:
 
         try:
             # Save complete checkpoint locally first
-            checkpoint_path = os.path.join(self.checkpointpath, "weights_best.pt")
+            checkpoint_path = os.path.join(self.checkpointpath, "full_model_weights.pt")
             model._forward_hooks.clear()
 
             # Create complete checkpoint with all required keys

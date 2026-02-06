@@ -15,7 +15,7 @@ from typing import Optional
 DEFAULT_WEIGHTS_REPO = "AlbeRota/UnReflectAnything"
 
 # Default checkpoint filename under the cache dir (must match what the HF repo provides)
-DEFAULT_WEIGHTS_FILENAME = "weights_best.pt"
+DEFAULT_WEIGHTS_FILENAME = "full_model_weights.pt"
 
 # Subfolder names in the HuggingFace repo
 IMAGES_SUBFOLDER = "sample_images"

@@ -260,9 +260,9 @@ def load_best_model_by_run(
     if models_dir is None or not os.path.isdir(models_dir):
         raise FileNotFoundError(f"Models directory not found for run: {run_identifier}")
 
-    # Prefer weights_best.pt (EarlyStopping), fallback to best_model.pth (engine best)
+    # Prefer full_model_weights.pt (EarlyStopping), fallback to best_model.pth (engine best)
     candidate_paths = [
-        os.path.join(models_dir, "weights_best.pt"),
+        os.path.join(models_dir, "full_model_weights.pt"),
         os.path.join(models_dir, "best_model.pth"),
     ]
     best_ckpt = next((p for p in candidate_paths if os.path.exists(p)), None)

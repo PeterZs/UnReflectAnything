@@ -1,10 +1,10 @@
 # UnReflectAnything
 ### RGB-Only Highlight Removal by Rendering Synthetic Specular Supervision
-[![Project](https://img.shields.io/badge/Project-webpage-897BFF?logo=")](https://alberto-rota.github.io/UnReflectAnything/)
+[![Project](https://img.shields.io/badge/Project-webpage-543fce?logo=")](https://alberto-rota.github.io/UnReflectAnything/)
 [![PyPI](https://img.shields.io/badge/pip%20install-PyPI-3776AB?logo=python&logoColor=3776AB)](https://pypi.org/project/unreflectanything/)
 [![Paper](https://img.shields.io/badge/Paper-arXiv-B31B1B?logo=arxiv&logoColor=B31B1B)](https://huggingface.co/spaces/Stable-X/StableDelight)
-[![Demo](https://img.shields.io/badge/Weights-Hugging%20Face%20-FFD21E?logo=huggingface&logoColor=FFD21E)](https://huggingface.co/spaces/AlbeRota/UnReflectAnything)
-[![Weights](https://img.shields.io/badge/Demo-Hugging%20Face%20-FFD21E?logo=huggingface&logoColor=FFD21E)](https://huggingface.co/AlbeRota/UnReflectAnything)
+[![Weights](https://img.shields.io/badge/Weights-Hugging%20Face%20-FFD21E?logo=huggingface&logoColor=FFD21E)](https://huggingface.co/spaces/AlbeRota/UnReflectAnything)
+[![Demo](https://img.shields.io/badge/Demo-Hugging%20Face%20-FFD21E?logo=huggingface&logoColor=FFD21E)](https://huggingface.co/AlbeRota/UnReflectAnything)
 [![License](https://img.shields.io/badge/License-MIT-1E811F)](https://mit-license.org/)
 
 
@@ -65,7 +65,7 @@ from pathlib import Path
 from unreflectanything import InferenceOptions, run_inference
 
 options = InferenceOptions(
-    weights_path=Path("path/to/weights_best.pt"),
+    weights_path=Path("path/to/full_model_weights.pt"),
     input_dir=Path("input/images"),
     output_dir=Path("output/diffuse"),
 )

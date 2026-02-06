@@ -86,7 +86,7 @@ def validate_run_for_resume(run_dir: str) -> Tuple[bool, str, Optional[Dict[str,
     
     # Check for checkpoints
     checkpoint_files = glob.glob(os.path.join(models_dir, "checkpoint_epoch_*.pth"))
-    best_model_path = os.path.join(models_dir, "weights_best.pt")
+    best_model_path = os.path.join(models_dir, "full_model_weights.pt")
     
     if not checkpoint_files and not os.path.exists(best_model_path):
         return False, "No checkpoints found in models directory", None

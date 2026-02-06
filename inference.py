@@ -675,7 +675,7 @@ def load_model(
         config.MODEL.MODEL_MODULE = options.model_module
     config.USE_TORCH_COMPILE = False
 
-    model = create_model_from_config(config, device)
+    model = create_model_from_config(config, device,verbose=False)
     state_dict = checkpoint.get("model_state_dict")
     if state_dict is None:
         raise KeyError("Checkpoint does not contain model_state_dict")

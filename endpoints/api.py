@@ -60,7 +60,7 @@ def inference(
             - Path to output directory (for directory input)
             If None, returns the result as a tensor.
         weights_path: Path to model weights. Defaults to the cache directory
-            (~/.cache/unreflectanything/weights/weights_best.pt).
+            (~/.cache/unreflectanything/weights/full_model_weights.pt).
         config: Configuration source. Can be:
             - Path to a YAML config file
             - Dictionary with config overrides
@@ -720,15 +720,13 @@ def _verify_weights_impl(
     model_config_path: Optional[Union[str, PathLike, Path]] = None,
 ) -> bool:
     """Verify weights file exists and loads into model with no key alignment errors."""
-    import time
-    
+        
     import torch
     from inference import InferenceOptions, load_model
     from unreflectanything.weights import (
         DEFAULT_WEIGHTS_FILENAME,
         get_weights_cache_dir,
     )
-
     if weights_path is None:
         resolved = get_weights_cache_dir() / DEFAULT_WEIGHTS_FILENAME
     else:
@@ -737,6 +735,8 @@ def _verify_weights_impl(
     if not resolved.exists():
         print(f"Weights file not found: {resolved}")
         return False
+    else:
+        print(f"Found weights file: {resolved}\nLoading weights and verifying key alignemnts...")
 
     options = InferenceOptions(
         weights_path=resolved,
@@ -748,10 +748,11 @@ def _verify_weights_impl(
     try:
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         load_model(options, device, strict=True, quiet=True)
-        print("Weights verified: loaded into model with no key alignment errors.")
+        print("✔️  Weights verified: loaded into model with no key alignment errors.")
         return True
     except (KeyError, RuntimeError, FileNotFoundError) as e:
-        print(f"Weights verification failed: {e}")
+        print(f"❌  Weights verification failed: {e}")
+        print("Download the model weights with 'unreflect download --weights'")
         return False
 
 
