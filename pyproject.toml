@@ -55,6 +55,9 @@ unreflectanything = "unreflectanything.cli:main"
 unreflect = "unreflectanything.cli:main"
 ura = "unreflectanything.cli:main"
 
+[project.optional-dependencies]
+dev = ["build>=1.2", "twine>=5.1"]
+
 [project.urls]
 Homepage = "https://github.com/alberto-rota/UnReflectAnything"
 Repository = "https://github.com/alberto-rota/UnReflectAnything"
