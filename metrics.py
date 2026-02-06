@@ -89,29 +89,54 @@ def _composite_inside_mask(x: torch.Tensor, y: torch.Tensor, mask01: torch.Tenso
     """
     return x * mask01 + y * (1.0 - mask01)
 
+
+def _rgb_to_lab(rgb: torch.Tensor) -> torch.Tensor:
+    """
+    sRGB [0, 1] (BCHW) -> CIE LAB (BCHW), D65.
+    L in [0, 100], a/b approximately in [-128, 128]. Pure PyTorch, no Kornia.
+    """
+    # Linearize sRGB
+    lin = torch.where(
+        rgb <= 0.04045,
+        rgb / 12.92,
+        torch.pow((rgb + 0.055) / 1.055, 2.4),
+    )
+    # sRGB to XYZ (D65), per channel
+    # [B,3,H,W] @ rows of M
+    x = lin[:, 0:1] * 0.4124564 + lin[:, 1:2] * 0.3575761 + lin[:, 2:3] * 0.1804375
+    y = lin[:, 0:1] * 0.2126729 + lin[:, 1:2] * 0.7151522 + lin[:, 2:3] * 0.0721750
+    z = lin[:, 0:1] * 0.0193339 + lin[:, 1:2] * 0.1191920 + lin[:, 2:3] * 0.9503041
+    # D65 white point
+    xn, yn, zn = 0.95047, 1.0, 1.08883
+    x, y, z = x / xn, y / yn, z / zn
+    delta = 6.0 / 29.0
+    eps = 1e-12
+
+    def _f(t: torch.Tensor) -> torch.Tensor:
+        return torch.where(
+            t > delta ** 3,
+            torch.pow(t.clamp_min(eps), 1.0 / 3.0),
+            t / (3.0 * delta * delta) + 4.0 / 29.0,
+        )
+
+    L = 116.0 * _f(y) - 16.0
+    a = 500.0 * (_f(x) - _f(y))
+    b = 200.0 * (_f(y) - _f(z))
+    return torch.cat([L, a, b], dim=1)  # [B,3,H,W]
+
+
 def _ring_mask(mask01: torch.Tensor, ring: int = 3) -> torch.Tensor:
     """
-    Create a thin band around the mask boundary using (dilation - erosion),
-    i.e., include pixels both just outside and just inside the original mask.
-    Falls back to pooling when morphology is unavailable.
+    Create a thin band around the mask boundary using (dilation - erosion)
+    via max-pool / min-pool. Pure PyTorch, no Kornia.
     """
     if ring <= 0:
         return torch.zeros_like(mask01)
-    try:
-        from kornia.morphology import dilation, erosion
-        kernel = torch.ones((1, 1, 2 * ring + 1, 2 * ring + 1), device=mask01.device, dtype=mask01.dtype)
-        dil = dilation(mask01, kernel)
-        ero = erosion(mask01, kernel)
-        band = (dil - ero).clamp(0, 1)
-        return band
-    except Exception:
-        # Fallback: dilation via max-pool; erosion via min-pool implemented as 1 - max-pool(1-mask)
-        dil = F.max_pool2d(mask01, kernel_size=2*ring+1, stride=1, padding=ring)
-        inv = 1.0 - mask01
-        inv_dil = F.max_pool2d(inv, kernel_size=2*ring+1, stride=1, padding=ring)
-        ero = 1.0 - inv_dil
-        band = (dil - ero).clamp(0, 1)
-        return band
+    dil = F.max_pool2d(mask01, kernel_size=2 * ring + 1, stride=1, padding=ring)
+    inv = 1.0 - mask01
+    inv_dil = F.max_pool2d(inv, kernel_size=2 * ring + 1, stride=1, padding=ring)
+    ero = 1.0 - inv_dil
+    return (dil - ero).clamp(0, 1)
 
 # =========================
 # LPIPS cache
@@ -216,10 +241,9 @@ def ssim_metric(
     k1: float = 0.01,
     k2: float = 0.03,
     reduction: Literal["mean", "none"] = "mean",
-    use_kornia_if_available: bool = True,
 ) -> torch.Tensor:
     """
-    Structural Similarity Index with masking.
+    Structural Similarity Index with masking. Pure PyTorch (Gaussian window).
     """
     _validate_pair(pred_image, target_image)
     x = _to_float_tensor(pred_image)
@@ -228,28 +252,7 @@ def ssim_metric(
         data_range = _infer_data_range(torch.stack([x, y], dim=0))
     m = _prepare_mask(x, mask)  # [B,1,H,W]
 
-    # ---- Try Kornia first ----
-    if use_kornia_if_available:
-        try:
-            import kornia
-            if abs(data_range - 1.0) > 1e-6:
-                x_s = x / data_range
-                y_s = y / data_range
-                max_val = 1.0
-            else:
-                x_s, y_s, max_val = x, y, 1.0
-
-            ssim_map = kornia.metrics.ssim(
-                x_s, y_s, window_size=window_size, max_val=max_val, reduction="none"
-            )
-            if ssim_map.size(1) > 1:
-                ssim_map = ssim_map.mean(dim=1, keepdim=True)
-            per_image = _masked_reduce_per_image(ssim_map, m)
-            return per_image.mean() if reduction == "mean" else per_image
-        except Exception:
-            pass  # fall back to torch-only
-
-    # ---- Torch-only SSIM (Gaussian window) ----
+    # Torch-only SSIM (Gaussian window)
     def _gaussian_kernel1d(ks: int, sigma: float, device, dtype):
         coords = torch.arange(ks, device=device, dtype=dtype) - ks // 2
         g = torch.exp(-(coords ** 2) / (2 * sigma * sigma))
@@ -402,21 +405,15 @@ def deltaE2000_metric(
 ) -> torch.Tensor:
     """
     Mean CIEDE2000 color difference in LAB space (masked).
-    Uses kornia.color.rgb_to_lab and a torch implementation of ΔE00.
+    Uses pure PyTorch RGB->LAB and ΔE00; no Kornia required.
     """
     _validate_pair(pred_image, target_image)
     x01 = _to_01(_to_float_tensor(pred_image), data_range)
     y01 = _to_01(_to_float_tensor(target_image, device=x01.device), data_range)
     m = _prepare_mask(x01, mask)
 
-    try:
-        import kornia.color as Kcolor
-    except Exception as e:
-        raise ImportError("kornia is required for deltaE2000_metric. Install via `pip install kornia`.") from e
-
-    # Convert RGB->LAB (CIE Lab D65)
-    x_lab = Kcolor.rgb_to_lab(x01)  # [B,3,H,W] -> L in [0,100], a/b roughly [-128,127]
-    y_lab = Kcolor.rgb_to_lab(y01)
+    x_lab = _rgb_to_lab(x01)  # [B,3,H,W] -> L in [0,100], a/b ~ [-128,128]
+    y_lab = _rgb_to_lab(y01)
 
     # ΔE2000 implementation in torch
     def _deltaE00(lab1, lab2, eps=1e-12):
@@ -685,14 +682,8 @@ def chroma_consistency_deltaE(
     m = _prepare_mask(p01, mask)
     ring_m = _ring_mask(m, ring)
 
-    # Compare pred (inside mask) vs reference (ring context): average LAB of ring
-    try:
-        import kornia.color as Kcolor
-    except Exception as e:
-        raise ImportError("kornia is required for chroma_consistency_deltaE. Install via `pip install kornia`.") from e
-
-    p_lab = Kcolor.rgb_to_lab(p01)
-    r_lab = Kcolor.rgb_to_lab(r01)
+    p_lab = _rgb_to_lab(p01)
+    r_lab = _rgb_to_lab(r01)
 
     # mean LAB over ring per image (per-channel below)
     # Recompute per-channel masked reduce:

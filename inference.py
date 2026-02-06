@@ -17,38 +17,12 @@ import warnings
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
-from typing import List, Optional, Sequence, Tuple
+from typing import TYPE_CHECKING, List, Optional, Sequence, Tuple
 
-import torch
-import yaml
-from dotmap import DotMap
-from PIL import Image
-from torch import Tensor
-from torch.utils.data import Dataset, DataLoader
-from torchvision.transforms import functional as TF
-from rich.console import Console
-from rich.progress import Progress, SpinnerColumn, TextColumn
-from rich.table import Table
-
-from main import create_model_from_config, load_and_process_config
-from models_old import UnReflect_Model_TokenInpainter
-from utilities.run_resume import get_resume_info
-
-# Optional imports for monitoring
-try:
-    from fvcore.nn import FlopCountAnalysis
-
-    FVCORE_AVAILABLE = True
-except ImportError:
-    FVCORE_AVAILABLE = False
-    FlopCountAnalysis = None
-
-try:
-    import pynvml
-
-    PYNVML_AVAILABLE = True
-except ImportError:
-    PYNVML_AVAILABLE = False
+if TYPE_CHECKING:
+    import torch
+    from torch import Tensor
+    from models_old import UnReflect_Model_TokenInpainter
 
 
 @dataclass
@@ -113,7 +87,10 @@ class InferenceOptions:
     num_workers: int = 4
 
 
-console = Console()
+def _console():
+    """Lazy import for rich.Console so heavy deps are not loaded when only InferenceOptions is used."""
+    from rich.console import Console
+    return Console()
 
 
 @contextmanager
@@ -140,7 +117,7 @@ def suppress_stdout_stderr():
 class UsageMonitor:
     """Monitor FLOPS and energy consumption during inference."""
 
-    def __init__(self, device: torch.device, model: torch.nn.Module):
+    def __init__(self, device: "torch.device", model: "torch.nn.Module"):
         """Initialize the usage monitor.
 
         Args:
@@ -166,13 +143,14 @@ class UsageMonitor:
         self.total_forward_time = 0.0
 
         # Initialize GPU monitoring if available
-        if self.is_cuda and PYNVML_AVAILABLE:
+        if self.is_cuda:
             try:
+                import pynvml
                 pynvml.nvmlInit()
                 self.handle = pynvml.nvmlDeviceGetHandleByIndex(0)
                 self.energy_initialized = True
             except Exception as e:
-                console.log(
+                _console().log(
                     f"[yellow]Warning: Could not initialize GPU energy monitoring: {e}[/yellow]"
                 )
                 self.energy_initialized = False
@@ -181,10 +159,11 @@ class UsageMonitor:
 
     def get_gpu_info(self) -> Optional[dict]:
         """Get GPU hardware information."""
-        if not self.is_cuda or not PYNVML_AVAILABLE:
+        if not self.is_cuda or not self.energy_initialized:
             return None
 
         try:
+            import pynvml
             name = pynvml.nvmlDeviceGetName(self.handle).decode("utf-8")
             memory_info = pynvml.nvmlDeviceGetMemoryInfo(self.handle)
             return {
@@ -198,6 +177,7 @@ class UsageMonitor:
         """Start energy monitoring."""
         if self.energy_initialized:
             try:
+                import pynvml
                 self.energy_start = (
                     pynvml.nvmlDeviceGetTotalEnergyConsumption(self.handle) / 1000.0
                 )  # Convert mJ to J
@@ -208,13 +188,14 @@ class UsageMonitor:
         """Stop energy monitoring."""
         if self.energy_initialized:
             try:
+                import pynvml
                 self.energy_end = (
                     pynvml.nvmlDeviceGetTotalEnergyConsumption(self.handle) / 1000.0
                 )  # Convert mJ to J
             except Exception:
                 self.energy_end = None
 
-    def compute_flops(self, rgb_batch: Tensor, inpaint_mask_override: Tensor, inpaint_mask_dilation: int = 11):
+    def compute_flops(self, rgb_batch: "Tensor", inpaint_mask_override: "Tensor", inpaint_mask_dilation: int = 11):
         """Compute FLOPS for a single forward pass.
 
         Args:
@@ -222,8 +203,11 @@ class UsageMonitor:
             inpaint_mask_override: Patch mask tensor of shape [B,1,H,W].
             inpaint_mask_dilation: Dilation value for mask processing. Defaults to 11.
         """
-        if not FVCORE_AVAILABLE or FlopCountAnalysis is None:
+        try:
+            from fvcore.nn import FlopCountAnalysis
+        except ImportError:
             return
+        import torch
 
         if self.flops_per_forward is None:
             try:
@@ -333,7 +317,7 @@ class UsageMonitor:
                 batch_size = rgb_batch.shape[0]
                 self.flops_per_image = batch_flops / batch_size
             except Exception as e:
-                console.log(f"[yellow]Warning: Could not compute FLOPS: {e}[/yellow]")
+                _console().log(f"[yellow]Warning: Could not compute FLOPS: {e}[/yellow]")
                 self.flops_per_forward = None
                 self.flops_per_image = None
 
@@ -359,7 +343,7 @@ class UsageMonitor:
         energy_joules = self.energy_end - self.energy_start
         return energy_joules / 3600.0
 
-    def generate_report(self, total_images: int) -> Table:
+    def generate_report(self, total_images: int):
         """Generate a tabular report of usage metrics.
 
         Args:
@@ -368,6 +352,7 @@ class UsageMonitor:
         Returns:
             A rich Table with the usage report.
         """
+        from rich.table import Table
         table = Table(
             title="Energy and Compute Usage Report",
             show_header=True,
@@ -463,6 +448,7 @@ class UsageMonitor:
 
 def parse_cli() -> InferenceOptions:
     """Parse command line arguments and YAML file into inference options."""
+    import yaml
 
     parser = argparse.ArgumentParser(
         description="Run UnReflectAnything diffuse inference"
@@ -481,7 +467,7 @@ def parse_cli() -> InferenceOptions:
     if not config_path.exists():
         raise FileNotFoundError(f"Config file not found: {config_path}")
 
-    console.log(f"Loading inference configuration from [bold]{config_path}[/bold]")
+    _console().log(f"Loading inference configuration from [bold]{config_path}[/bold]")
 
     with config_path.open("r", encoding="utf-8") as handle:
         raw_options = yaml.safe_load(handle)
@@ -508,7 +494,7 @@ def parse_cli() -> InferenceOptions:
             cache_dir = get_weights_cache_dir()
         except ImportError:
             pass
-        hint = f" Run 'unreflectanything download-weights' first, or set weights_path in the config." if cache_dir else ""
+        hint = " Run 'unreflectanything download-weights' first, or set weights_path in the config." if cache_dir else ""
         raise FileNotFoundError(
             f"weights_path must point to an existing checkpoint file.{hint}"
         )
@@ -518,7 +504,7 @@ def parse_cli() -> InferenceOptions:
         raise ValueError("output_dir must be provided")
 
     output_dir.mkdir(parents=True, exist_ok=True)
-    console.log(
+    _console().log(
         "✔️  Configuration loaded",
         # extra={
         #     "config": {
@@ -583,8 +569,9 @@ def parse_cli() -> InferenceOptions:
     return options
 
 
-def _load_config_from_checkpoint(checkpoint: dict) -> Optional[DotMap]:
+def _load_config_from_checkpoint(checkpoint: dict):
     """Extract and normalize configuration information from a checkpoint."""
+    from dotmap import DotMap
 
     raw_config = checkpoint.get("config")
     if raw_config is None:
@@ -601,8 +588,10 @@ def _load_config_from_checkpoint(checkpoint: dict) -> Optional[DotMap]:
     return cfg
 
 
-def _load_config_from_run(options: InferenceOptions) -> Optional[DotMap]:
+def _load_config_from_run(options: InferenceOptions):
     """Try to recover DotMap configuration from an existing run directory."""
+    from dotmap import DotMap
+    from utilities.run_resume import get_resume_info
 
     if options.run is None or options.runs_dir is None:
         return None
@@ -620,8 +609,9 @@ def _load_config_from_run(options: InferenceOptions) -> Optional[DotMap]:
     return result
 
 
-def _load_config_from_yaml(options: InferenceOptions) -> Optional[DotMap]:
+def _load_config_from_yaml(options: InferenceOptions):
     """Parse a training-style YAML configuration if provided."""
+    from main import load_and_process_config
 
     if options.model_config_path is None:
         return None
@@ -630,10 +620,10 @@ def _load_config_from_yaml(options: InferenceOptions) -> Optional[DotMap]:
 
 def load_model(
     options: InferenceOptions,
-    device: torch.device,
+    device: "torch.device",
     strict: bool = False,
     quiet: bool = False,
-) -> UnReflect_Model_TokenInpainter:
+) -> "UnReflect_Model_TokenInpainter":
     """Build the model architecture and load checkpoint weights.
 
     Args:
@@ -646,8 +636,11 @@ def load_model(
     Returns:
         Loaded model in eval mode.
     """
+    import torch
+    from main import create_model_from_config
+
     if not quiet:
-        console.log(
+        _console().log(
             f"Loading checkpoint from [bold]{options.weights_path}[/bold] on device [bold]{device}[/bold]"
         )
     checkpoint = torch.load(
@@ -676,7 +669,7 @@ def load_model(
             " or ensure the checkpoint/run stores a serialised config."
         )
     if config_source is not None and not quiet:
-        console.log(f"Model configuration loaded from {config_source}")
+        _console().log(f"Model configuration loaded from {config_source}")
 
     if options.model_module is not None:
         config.MODEL.MODEL_MODULE = options.model_module
@@ -695,7 +688,7 @@ def load_model(
 
     model.eval()
     if not quiet:
-        console.log("✔️  Model loaded and ready for inference")
+        _console().log("✔️  Model loaded and ready for inference")
     return model
 
 
@@ -711,53 +704,13 @@ def list_image_paths(root: Path, extensions: Sequence[str]) -> List[Path]:
     if not files:
         raise RuntimeError(f"No images found under {root}")
     sorted_files = sorted(files)
-    console.log(f"Discovered [bold]{len(sorted_files)}[/bold] images under {root}")
+    _console().log(f"Discovered [bold]{len(sorted_files)}[/bold] images under {root}")
     return sorted_files
 
 
-class ImageDataset(Dataset):
-    """Dataset for loading and preprocessing images in parallel.
-
-    This dataset loads images from file paths, converts them to RGB,
-    and resizes them to a target size while preserving original dimensions.
-    """
-
-    def __init__(self, paths: List[Path], target_size: Tuple[int, int]):
-        """Initialize the dataset.
-
-        Args:
-            paths: List of image file paths.
-            target_size: Target size (H, W) for resizing images.
-        """
-        self.paths = paths
-        self.target_size = target_size
-
-    def __len__(self) -> int:
-        return len(self.paths)
-
-    def __getitem__(self, idx: int) -> Tuple[Tensor, Tensor, str]:
-        """Load and preprocess a single image.
-
-        Returns:
-            A tuple containing:
-            - Resized image tensor of shape [3, H, W]
-            - Original image size as tensor [2] with [H, W]
-            - Original file path as string
-        """
-        path = self.paths[idx]
-        with Image.open(path) as img:
-            rgb_img = img.convert("RGB")
-            original_size = rgb_img.size[::-1]  # PIL size is (W, H), we need (H, W)
-            tensor = TF.to_tensor(rgb_img)
-            resized = TF.resize(tensor, self.target_size, antialias=True)
-        # Convert size to tensor for proper batching: [H, W]
-        size_tensor = torch.tensor(original_size, dtype=torch.int32)
-        return resized, size_tensor, str(path)
-
-
 def load_image_batch(
-    paths: Sequence[Path], target_size: Tuple[int, int], device: torch.device
-) -> Tuple[Tensor, List[Tuple[int, int]]]:
+    paths: Sequence[Path], target_size: Tuple[int, int], device: "torch.device"
+):
     """Load a batch of images into a tensor of shape ``[B,3,H,W]``.
 
     This function maintains backward compatibility but uses sequential loading.
@@ -768,6 +721,9 @@ def load_image_batch(
         - The batch tensor of shape ``[B,3,H,W]``
         - A list of original image sizes ``[(H, W), ...]`` for each image
     """
+    import torch
+    from PIL import Image
+    from torchvision.transforms import functional as TF
 
     images = []
     original_sizes = []
@@ -784,7 +740,7 @@ def load_image_batch(
     return batch.to(device=device, dtype=torch.float32), original_sizes
 
 
-def compute_highlight_mask(rgb_batch: Tensor, threshold: float = 0.7) -> Tensor:
+def compute_highlight_mask(rgb_batch: "Tensor", threshold: float = 0.7) -> "Tensor":
     """Compute binary highlight masks via intensity thresholding.
 
     The mask uses the simple brightness (average of R, G, B channels)
@@ -798,7 +754,6 @@ def compute_highlight_mask(rgb_batch: Tensor, threshold: float = 0.7) -> Tensor:
     Returns:
         Binary mask tensor of shape ``[B,1,H,W]``.
     """
-
     # Compute brightness as the mean across the channel dimension (R,G,B)
     brightness = rgb_batch.mean(dim=1, keepdim=True)/rgb_batch.mean(dim=1, keepdim=True).max()  # [B,1,H,W]
     mask = (brightness > threshold).to(rgb_batch.dtype)
@@ -806,10 +761,10 @@ def compute_highlight_mask(rgb_batch: Tensor, threshold: float = 0.7) -> Tensor:
 
 
 def run_model(
-    model: torch.nn.Module,
-    rgb_batch: Tensor,
+    model: "torch.nn.Module",
+    rgb_batch: "Tensor",
     inpaint_mask_dilation: int = 11,
-) -> Tensor:
+) -> "Tensor":
     """Run minimal-overhead model forward pass on a batch of RGB images.
 
     This is the core inference function optimized for speed. It performs only
@@ -832,6 +787,7 @@ def run_model(
         >>> rgb = torch.rand(4, 3, 448, 448, device='cuda')  # [B, C, H, W]
         >>> diffuse = run_model(model, rgb)  # [B, 3, H, W]
     """
+    import torch
     model.eval()
     with torch.no_grad():
         outputs = model({
@@ -847,7 +803,7 @@ def run_model(
 
 
 def save_diffuse_batch(
-    diffuse_batch: Tensor,
+    diffuse_batch: "Tensor",
     batch_paths: Sequence[Path],
     input_root: Path,
     output_root: Path,
@@ -865,6 +821,7 @@ def save_diffuse_batch(
             Required if ``resize_output`` is ``True``.
         resize_output: If ``True``, resize output images to original dimensions.
     """
+    from torchvision.transforms import functional as TF
 
     diffuse_batch = diffuse_batch.clamp_(0.0, 1.0).cpu()
     for idx, (tensor, input_path) in enumerate(zip(diffuse_batch, batch_paths)):
@@ -883,6 +840,11 @@ def save_diffuse_batch(
 
 def run_inference(options: InferenceOptions) -> None:
     """Execute end-to-end inference on the dataset described by ``options``."""
+    import torch
+    from PIL import Image
+    from torch.utils.data import Dataset, DataLoader
+    from torchvision.transforms import functional as TF
+    from rich.progress import Progress, SpinnerColumn, TextColumn
 
     desired_device = torch.device(
         options.device if torch.cuda.is_available() else "cpu"
@@ -901,25 +863,37 @@ def run_inference(options: InferenceOptions) -> None:
     monitor = None
     if options.monitor_usage:
         monitor = UsageMonitor(desired_device, model)
-        if not FVCORE_AVAILABLE:
-            console.log(
-                "[yellow]Warning: fvcore not available. FLOPS tracking will be disabled.[/yellow]"
-            )
-        if not PYNVML_AVAILABLE and desired_device.type == "cuda":
-            console.log(
-                "[yellow]Warning: pynvml not available. Energy tracking will be disabled.[/yellow]"
-            )
         monitor.start_monitoring()
 
-    console.log(
+    _console().log(
         f"Starting inference over [bold]{len(image_paths)}[/bold] images with batch size {options.batch_size}"
     )
     if options.num_workers > 0:
-        console.log(
+        _console().log(
             f"Using [bold]{options.num_workers}[/bold] parallel workers for image loading"
         )
 
-    # Create dataset and dataloader for parallel image loading
+    # Dataset class defined here so torch/PIL are only loaded when run_inference runs
+    class ImageDataset(Dataset):
+        """Dataset for loading and preprocessing images in parallel."""
+
+        def __init__(self, paths: List[Path], target_size: Tuple[int, int]):
+            self.paths = paths
+            self.target_size = target_size
+
+        def __len__(self) -> int:
+            return len(self.paths)
+
+        def __getitem__(self, idx: int):
+            path = self.paths[idx]
+            with Image.open(path) as img:
+                rgb_img = img.convert("RGB")
+                original_size = rgb_img.size[::-1]
+                tensor = TF.to_tensor(rgb_img)
+                resized = TF.resize(tensor, self.target_size, antialias=True)
+            size_tensor = torch.tensor(original_size, dtype=torch.int32)
+            return resized, size_tensor, str(path)
+
     dataset = ImageDataset(image_paths, target_size)
     dataloader = DataLoader(
         dataset,
@@ -934,7 +908,7 @@ def run_inference(options: InferenceOptions) -> None:
         SpinnerColumn(),
         TextColumn("[progress.description]{task.description}"),
         TextColumn("{task.completed}/{task.total}"),
-        console=console,
+        console=_console(),
         transient=False,
     ) as progress:
         task_id = progress.add_task("Processing", total=len(image_paths))
@@ -999,12 +973,12 @@ def run_inference(options: InferenceOptions) -> None:
     # Stop monitoring and generate report
     if monitor is not None:
         monitor.stop_monitoring()
-        console.log("")  # Empty line for spacing
+        _console().log("")  # Empty line for spacing
         report_table = monitor.generate_report(len(image_paths))
-        console.print(report_table)
-        console.log("")  # Empty line for spacing
+        _console().print(report_table)
+        _console().log("")  # Empty line for spacing
 
-    console.log(
+    _console().log(
         f"✨ Inference complete. Results saved to [bold]{options.output_dir}[/bold]"
     )
 

@@ -18,17 +18,15 @@ Example usage:
     metrics = evaluate("output/", "reference/", metrics=["psnr", "ssim"])
 """
 
-from __future__ import annotations
 
 import sys
 from pathlib import Path
 from typing import TYPE_CHECKING, Dict, List, Literal, Optional, Union
-
-import torch
-from torch import Tensor
+from os import PathLike
 
 if TYPE_CHECKING:
     from os import PathLike
+    from torch import Tensor
 
 
 # =============================================================================
@@ -36,7 +34,7 @@ if TYPE_CHECKING:
 # =============================================================================
 
 def inference(
-    input: Union[str, PathLike, Path, Tensor],
+    input: Union[str, PathLike, Path, "Tensor"],
     output: Optional[Union[str, PathLike, Path]] = None,
     weights_path: Optional[Union[str, PathLike, Path]] = None,
     config: Optional[Union[str, PathLike, Path, dict]] = None,
@@ -45,7 +43,7 @@ def inference(
     brightness_threshold: float = 0.8,
     resize_output: bool = True,
     verbose: bool = False,
-) -> Optional[Tensor]:
+) -> Optional["Tensor"]:
     """Run inference on input image(s) to remove specular reflections.
 
     This function runs the UnReflectAnything model on input images to produce
@@ -92,12 +90,19 @@ def inference(
         >>> result = inference(img)  # Returns [1, 3, 448, 448] tensor
     """
     # Import here to avoid circular imports and speed up module load
+    
+    from torch import Tensor
+
     from inference import (
         InferenceOptions,
-        load_model,
+    )
+    from inference import (
         run_inference as _run_inference_files,
     )
-    from unreflectanything.weights import DEFAULT_WEIGHTS_FILENAME, get_weights_cache_dir
+    from unreflectanything.weights import (
+        DEFAULT_WEIGHTS_FILENAME,
+        get_weights_cache_dir,
+    )
 
     # Determine if input is a tensor
     is_tensor_input = isinstance(input, Tensor)
@@ -172,13 +177,13 @@ def inference(
 
 
 def _inference_tensor(
-    input_tensor: Tensor,
+    input_tensor: "Tensor",
     weights_path: Optional[Union[str, Path]] = None,
     config: Optional[Union[str, Path, dict]] = None,
     device: str = "cuda",
     brightness_threshold: float = 0.8,
     verbose: bool = False,
-) -> Tensor:
+) -> "Tensor":
     """Run inference on a tensor input, returning a tensor output.
 
     This is the minimal-overhead inference path for programmatic use.
@@ -194,8 +199,12 @@ def _inference_tensor(
     Returns:
         Tensor of shape [B, 3, H, W] with diffuse predictions.
     """
-    from inference import compute_highlight_mask, load_model, InferenceOptions
-    from unreflectanything.weights import DEFAULT_WEIGHTS_FILENAME, get_weights_cache_dir
+    import torch
+    from inference import InferenceOptions, load_model
+    from unreflectanything.weights import (
+        DEFAULT_WEIGHTS_FILENAME,
+        get_weights_cache_dir,
+    )
 
     # Validate input tensor
     if input_tensor.dim() != 4:
@@ -235,7 +244,7 @@ def _inference_tensor(
     input_tensor = input_tensor.to(device=torch_device, dtype=torch.float32)
 
     # Compute highlight mask
-    inpaint_mask = compute_highlight_mask(input_tensor, threshold=brightness_threshold)
+    # inpaint_mask = compute_highlight_mask(input_tensor, threshold=brightness_threshold)
 
     # Run inference - minimal forward pass
     model.eval()
@@ -243,6 +252,7 @@ def _inference_tensor(
         outputs = model({
             "rgb": input_tensor,
             "inpaint_mask_dilation": getattr(options, "inpaint_mask_dilation", 11),
+            # "inpaint_mask_override": inpaint_mask,
         })
 
     diffuse = outputs.get("diffuse")
@@ -262,17 +272,21 @@ def _inference_files_return_tensors(
     brightness_threshold: float,
     resize_output: bool,
     verbose: bool,
-) -> Tensor:
+) -> "Tensor":
     """Run file-based inference but return results as tensors instead of saving."""
+    import torch
     from PIL import Image
     from torchvision.transforms import functional as TF
+
     from inference import (
         InferenceOptions,
-        load_model,
         list_image_paths,
-        compute_highlight_mask,
+        load_model,
     )
-    from unreflectanything.weights import DEFAULT_WEIGHTS_FILENAME, get_weights_cache_dir
+    from unreflectanything.weights import (
+        DEFAULT_WEIGHTS_FILENAME,
+        get_weights_cache_dir,
+    )
 
     # Resolve weights path
     if weights_path is None:
@@ -346,10 +360,14 @@ def _inference_files_return_tensors(
     return torch.cat(results, dim=0)
 
 
-def _apply_config_to_options(options, config) -> "InferenceOptions":
+def _apply_config_to_options(options, config):
     """Apply config overrides to inference options."""
+    from typing import TYPE_CHECKING
+
     import yaml
-    from inference import InferenceOptions
+
+    if TYPE_CHECKING:
+        pass
 
     if isinstance(config, (str, Path)):
         config_path = Path(config).expanduser().resolve()
@@ -543,9 +561,9 @@ def download(
         >>> download("all", output_dir="./assets/", force=True)
     """
     from unreflectanything.weights import (
-        download_weights,
         download_images,
         download_notebooks,
+        download_weights,
         get_weights_cache_dir,
     )
 
@@ -585,10 +603,10 @@ def download(
 # =============================================================================
 
 def evaluate(
-    output: Union[str, PathLike, Path, Tensor],
-    reference: Union[str, PathLike, Path, Tensor],
+    output: Union[str, PathLike, Path, "Tensor"],
+    reference: Union[str, PathLike, Path, "Tensor"],
     metrics: Optional[List[str]] = None,
-    mask: Optional[Union[str, PathLike, Path, Tensor]] = None,
+    mask: Optional[Union[str, PathLike, Path, "Tensor"]] = None,
 ) -> Dict[str, float]:
     """Compute evaluation metrics between output and reference images.
 
@@ -702,8 +720,14 @@ def _verify_weights_impl(
     model_config_path: Optional[Union[str, PathLike, Path]] = None,
 ) -> bool:
     """Verify weights file exists and loads into model with no key alignment errors."""
+    import time
+    
+    import torch
     from inference import InferenceOptions, load_model
-    from unreflectanything.weights import DEFAULT_WEIGHTS_FILENAME, get_weights_cache_dir
+    from unreflectanything.weights import (
+        DEFAULT_WEIGHTS_FILENAME,
+        get_weights_cache_dir,
+    )
 
     if weights_path is None:
         resolved = get_weights_cache_dir() / DEFAULT_WEIGHTS_FILENAME
@@ -742,10 +766,10 @@ def _verify_dataset_impl(
 
     # Try to instantiate the dataset to verify structure
     from dataset import (
-        SCRREAM_Dataset,
         HOUSECAT6D_Dataset,
         POLARGB_Dataset,
         RGBP_Dataset,
+        SCRREAM_Dataset,
     )
 
     dataset_classes = {
@@ -862,8 +886,8 @@ def cite(format: Literal["bibtex", "apa", "mla", "ieee", "plain"] = "bibtex") ->
             ...
         }
     """
-    from pathlib import Path
     import importlib.resources
+    from pathlib import Path
 
     # Try to load citations from file
     try:
@@ -937,7 +961,6 @@ __all__ = [
     "test",
     "download",
     "evaluate",
-    "verify",
     "verify_dataset",
     "cite",
 ]
