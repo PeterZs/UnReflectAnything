@@ -203,14 +203,28 @@ def _run_download_weights(args: argparse.Namespace) -> None:
     )
 
 
-def _run_dataset_verify(args: argparse.Namespace) -> None:
-    """Verify dataset structure - calls api.verify_dataset()."""
-    from unreflectanything.api import verify_dataset
+def _run_verify(args: argparse.Namespace) -> None:
+    """Verify dataset or weights - calls api.verify()."""
+    from unreflectanything.api import verify
 
-    is_valid = verify_dataset(
-        path=args.path,
+    if args.dataset:
+        what = "dataset"
+        path = args.path
+        if path is None:
+            sys.exit("Error: --path is required when using --dataset")
+    elif args.weights:
+        what = "weights"
+        path = None
+    else:
+        sys.exit("Error: specify either --dataset or --weights")
+
+    is_valid = verify(
+        what=what,
+        path=path,
+        weights_path=args.weights_path,
         dataset_type=args.type,
         config=args.config,
+        model_config_path=args.model_config,
     )
 
     sys.exit(0 if is_valid else 1)
@@ -494,38 +508,54 @@ def main() -> None:
     p_dl_weights.set_defaults(func=_run_download_weights)
 
     # -------------------------------------------------------------------------
-    # dataset (with subcommand verify)
+    # verify (dataset or weights)
     # -------------------------------------------------------------------------
-    p_dataset = subparsers.add_parser(
-        "dataset",
-        help="Dataset utilities",
-        description="Dataset management and verification utilities.",
-    )
-    dataset_subparsers = p_dataset.add_subparsers(dest="dataset_command", metavar="COMMAND")
-
-    p_verify = dataset_subparsers.add_parser(
+    p_verify = subparsers.add_parser(
         "verify",
-        help="Verify dataset structure is correct",
-        description="Check that a dataset has the correct structure for training/testing.",
+        help="Verify dataset structure or weights integrity",
+        description="Verify either that a dataset has the correct structure (--dataset) or that weights are downloaded and load into the model with no key alignment errors (--weights).",
     )
     p_verify.add_argument(
-        "path",
+        "--dataset",
+        action="store_true",
+        help="Verify dataset structure; requires --path",
+    )
+    p_verify.add_argument(
+        "--weights",
+        action="store_true",
+        help="Verify weights file exists and loads into model with no key alignment errors",
+    )
+    p_verify.add_argument(
+        "--path", "-p",
         type=str,
-        help="Path to the dataset root directory",
+        default=None,
+        help="Dataset root directory (required when --dataset)",
+    )
+    p_verify.add_argument(
+        "--weights-path", "-w",
+        type=str,
+        default=None,
+        help="Path to weights file (optional when --weights; default: cache)",
     )
     p_verify.add_argument(
         "--type", "-t",
         type=str,
         default=None,
-        help="Dataset type: SCRREAM, HOUSECAT6D, POLARGB, etc. (auto-detect if not specified)",
+        help="Dataset type: SCRREAM, HOUSECAT6D, POLARGB, etc. (auto-detect if not specified; only with --dataset)",
     )
     p_verify.add_argument(
         "--config", "-c",
         type=str,
         default=None,
-        help="Config file with dataset specifications",
+        help="Config file for dataset verification (only with --dataset)",
     )
-    p_verify.set_defaults(func=_run_dataset_verify)
+    p_verify.add_argument(
+        "--model-config", "-m",
+        type=str,
+        default=None,
+        help="Model config YAML for weights verification if checkpoint has no embedded config (only with --weights)",
+    )
+    p_verify.set_defaults(func=_run_verify)
 
     # -------------------------------------------------------------------------
     # evaluate
@@ -667,12 +697,6 @@ def main() -> None:
     if args.subcommand is None:
         parser.print_help()
         sys.exit(1)
-
-    # Handle dataset subcommand
-    if args.subcommand == "dataset":
-        if not hasattr(args, "func") or args.func is None:
-            p_dataset.print_help()
-            sys.exit(1)
 
     _print_subcommand_startup_message(args.subcommand)
     args.func(args)

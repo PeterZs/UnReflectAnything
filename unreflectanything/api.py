@@ -638,38 +638,105 @@ def evaluate(
 
 
 # =============================================================================
-# DATASET VERIFICATION
+# VERIFY (dataset or weights)
 # =============================================================================
 
-def verify_dataset(
-    path: Union[str, PathLike, Path],
+def verify(
+    what: Literal["dataset", "weights"],
+    path: Optional[Union[str, PathLike, Path]] = None,
+    weights_path: Optional[Union[str, PathLike, Path]] = None,
+    dataset_type: Optional[str] = None,
+    config: Optional[Union[str, PathLike, Path]] = None,
+    model_config_path: Optional[Union[str, PathLike, Path]] = None,
+) -> bool:
+    """Verify either dataset structure or weights integrity.
+
+    - **dataset**: Checks that the directory at `path` has the expected
+      structure for the given dataset type (or auto-detects). Requires `path`.
+    - **weights**: Checks that the weights file exists and loads into the
+      model with no state_dict key alignment errors (missing/unexpected keys).
+      Uses `weights_path` if provided, otherwise the default cache location.
+
+    Args:
+        what: Either "dataset" or "weights".
+        path: Dataset root directory (required when what="dataset").
+        weights_path: Path to weights file (optional when what="weights";
+            defaults to cache).
+        dataset_type: Dataset type for dataset verification (e.g. "SCRREAM",
+            "HOUSECAT6D", "POLARGB", "RGBP"). Auto-detect if None.
+        config: Optional config for dataset verification.
+        model_config_path: Optional model config YAML for weights verification
+            (used if checkpoint has no embedded config).
+
+    Returns:
+        True if verification passed, False otherwise.
+
+    Raises:
+        ValueError: If what="dataset" and path is None, or if what is invalid.
+        FileNotFoundError: If path (dataset) or weights file does not exist.
+
+    Example:
+        >>> verify("dataset", path="/data/SCRREAM", dataset_type="SCRREAM")
+        >>> verify("weights")
+        >>> verify("weights", weights_path="/path/to/weights.pt")
+    """
+    if what == "dataset":
+        if path is None:
+            raise ValueError("path is required when what='dataset'")
+        return _verify_dataset_impl(
+            path=Path(path).expanduser().resolve(),
+            dataset_type=dataset_type,
+            config=config,
+        )
+    elif what == "weights":
+        return _verify_weights_impl(
+            weights_path=weights_path,
+            model_config_path=model_config_path,
+        )
+    else:
+        raise ValueError(f"what must be 'dataset' or 'weights', got {what!r}")
+
+
+def _verify_weights_impl(
+    weights_path: Optional[Union[str, PathLike, Path]] = None,
+    model_config_path: Optional[Union[str, PathLike, Path]] = None,
+) -> bool:
+    """Verify weights file exists and loads into model with no key alignment errors."""
+    from inference import InferenceOptions, load_model
+    from unreflectanything.weights import DEFAULT_WEIGHTS_FILENAME, get_weights_cache_dir
+
+    if weights_path is None:
+        resolved = get_weights_cache_dir() / DEFAULT_WEIGHTS_FILENAME
+    else:
+        resolved = Path(weights_path).expanduser().resolve()
+
+    if not resolved.exists():
+        print(f"Weights file not found: {resolved}")
+        return False
+
+    options = InferenceOptions(
+        weights_path=resolved,
+        input_dir=Path("."),
+        output_dir=Path("."),
+        model_config_path=Path(model_config_path) if model_config_path else None,
+    )
+
+    try:
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        load_model(options, device, strict=True, quiet=True)
+        print("Weights verified: loaded into model with no key alignment errors.")
+        return True
+    except (KeyError, RuntimeError, FileNotFoundError) as e:
+        print(f"Weights verification failed: {e}")
+        return False
+
+
+def _verify_dataset_impl(
+    dataset_path: Path,
     dataset_type: Optional[str] = None,
     config: Optional[Union[str, PathLike, Path]] = None,
 ) -> bool:
-    """Verify that a dataset has the correct structure for training/testing.
-
-    This function checks that the dataset directory structure matches
-    the expected format for the specified dataset type.
-
-    Args:
-        path: Path to the dataset root directory.
-        dataset_type: Type of dataset to verify (e.g., "SCRREAM", "HOUSECAT6D",
-            "POLARGB", "SCARED", "PSD"). If None, attempts auto-detection.
-        config: Optional config file with dataset specifications.
-
-    Returns:
-        True if the dataset structure is valid, False otherwise.
-
-    Raises:
-        FileNotFoundError: If the dataset path doesn't exist.
-
-    Example:
-        >>> # Verify a SCRREAM dataset
-        >>> is_valid = verify_dataset("/data/SCRREAM", dataset_type="SCRREAM")
-        >>> if is_valid:
-        ...     print("Dataset is valid!")
-    """
-    dataset_path = Path(path).expanduser().resolve()
+    """Internal implementation of dataset verification."""
     if not dataset_path.exists():
         raise FileNotFoundError(f"Dataset path not found: {dataset_path}")
 
@@ -739,6 +806,36 @@ def verify_dataset(
     except Exception as e:
         print(f"Dataset verification failed: {e}")
         return False
+
+
+def verify_dataset(
+    path: Union[str, PathLike, Path],
+    dataset_type: Optional[str] = None,
+    config: Optional[Union[str, PathLike, Path]] = None,
+) -> bool:
+    """Verify that a dataset has the correct structure for training/testing.
+
+    This is a convenience wrapper around ``verify(what="dataset", path=path, ...)``.
+    Kept for backward compatibility.
+
+    Args:
+        path: Path to the dataset root directory.
+        dataset_type: Type of dataset to verify (e.g., "SCRREAM", "HOUSECAT6D",
+            "POLARGB", "RGBP"). If None, attempts auto-detection.
+        config: Optional config file with dataset specifications.
+
+    Returns:
+        True if the dataset structure is valid, False otherwise.
+
+    Example:
+        >>> is_valid = verify_dataset("/data/SCRREAM", dataset_type="SCRREAM")
+    """
+    return verify(
+        what="dataset",
+        path=path,
+        dataset_type=dataset_type,
+        config=config,
+    )
 
 
 # =============================================================================
@@ -840,6 +937,7 @@ __all__ = [
     "test",
     "download",
     "evaluate",
+    "verify",
     "verify_dataset",
     "cite",
 ]

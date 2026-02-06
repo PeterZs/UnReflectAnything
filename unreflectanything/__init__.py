@@ -6,7 +6,8 @@ Public API (recommended):
     test: Test/evaluate a trained model.
     download: Download weights, images, or notebooks.
     evaluate: Compute evaluation metrics.
-    verify_dataset: Verify dataset structure.
+    verify: Verify dataset structure or weights integrity.
+    verify_dataset: Verify dataset structure (alias for verify(what="dataset", ...)).
     cite: Get citation in various formats.
 
 Legacy API (still supported):
@@ -60,6 +61,9 @@ def __getattr__(name: str):
     if name == "evaluate":
         from unreflectanything.api import evaluate
         return evaluate
+    if name == "verify":
+        from unreflectanything.api import verify
+        return verify
     if name == "verify_dataset":
         from unreflectanything.api import verify_dataset
         return verify_dataset

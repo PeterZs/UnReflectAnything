@@ -629,13 +629,27 @@ def _load_config_from_yaml(options: InferenceOptions) -> Optional[DotMap]:
 
 
 def load_model(
-    options: InferenceOptions, device: torch.device
+    options: InferenceOptions,
+    device: torch.device,
+    strict: bool = False,
+    quiet: bool = False,
 ) -> UnReflect_Model_TokenInpainter:
-    """Build the model architecture and load checkpoint weights."""
+    """Build the model architecture and load checkpoint weights.
 
-    console.log(
-        f"Loading checkpoint from [bold]{options.weights_path}[/bold] on device [bold]{device}[/bold]"
-    )
+    Args:
+        options: Inference options containing weights_path and optional config sources.
+        device: Target device for the model.
+        strict: If True, load_state_dict uses strict=True; missing or unexpected
+            keys will raise RuntimeError. If False, mismatches are reported as warnings.
+        quiet: If True, suppress console logging (e.g. for verification).
+
+    Returns:
+        Loaded model in eval mode.
+    """
+    if not quiet:
+        console.log(
+            f"Loading checkpoint from [bold]{options.weights_path}[/bold] on device [bold]{device}[/bold]"
+        )
     checkpoint = torch.load(
         options.weights_path, map_location="cpu", weights_only=False
     )
@@ -661,7 +675,7 @@ def load_model(
             "Unable to reconstruct model configuration. Provide model_config_path"
             " or ensure the checkpoint/run stores a serialised config."
         )
-    if config_source is not None:
+    if config_source is not None and not quiet:
         console.log(f"Model configuration loaded from {config_source}")
 
     if options.model_module is not None:
@@ -672,14 +686,16 @@ def load_model(
     state_dict = checkpoint.get("model_state_dict")
     if state_dict is None:
         raise KeyError("Checkpoint does not contain model_state_dict")
-    missing, unexpected = model.load_state_dict(state_dict, strict=False)
-    if missing:
-        print(f"Warning: missing keys when loading checkpoint: {missing}")
-    if unexpected:
-        print(f"Warning: unexpected keys when loading checkpoint: {unexpected}")
+    missing, unexpected = model.load_state_dict(state_dict, strict=strict)
+    if not strict:
+        if missing:
+            print(f"Warning: missing keys when loading checkpoint: {missing}")
+        if unexpected:
+            print(f"Warning: unexpected keys when loading checkpoint: {unexpected}")
 
     model.eval()
-    console.log("✔️  Model loaded and ready for inference")
+    if not quiet:
+        console.log("✔️  Model loaded and ready for inference")
     return model
 
 
