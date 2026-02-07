@@ -13,7 +13,7 @@ UnReflectAnything inputs any RGB image and removes specular highlights, returnin
 UnReflectAnything works on both natural indoor and surgical/endoscopic domain data. 
 
 ---
-![examples](assets/header.png)
+![examples](https://github.com/alberto-rota/UnReflectAnything/blob/main/assets/header.png)
 
 ## Installation
 ```bash

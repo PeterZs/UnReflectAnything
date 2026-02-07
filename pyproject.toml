@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "unreflectanything"
-version = "0.1.6"
+version = "0.1.7"
 description = "Deep learning method for removing specular reflections from RGB images."
 readme = "README.md"
 requires-python = ">=3.11"
@@ -54,7 +54,7 @@ dependencies = [
   "lovely-tensors==0.1.21",
   "lpips==0.1.4",
   "matplotlib==3.10.8",
-  "moge @ git+https://github.com/microsoft/MoGe.git",
+  "moge",
   "natsort==8.4.0",
   "pandas==3.0.0",
   "paramiko==4.0.0",
@@ -86,6 +86,7 @@ explicit = true
 
 [tool.uv.sources]
 transformers = { git = "https://github.com/huggingface/transformers", rev = "2fe43376cdde02b7ffcf117e6eb9aa4375fb2dd1" }
+moge = { git = "https://github.com/microsoft/MoGe.git" }
 
 [tool.setuptools]
 include-package-data = true
