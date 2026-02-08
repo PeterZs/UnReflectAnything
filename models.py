@@ -2170,8 +2170,13 @@ class UnReflect_Model_TokenInpainter(UnReflect_Model):
         return tokens_list
 
     def forward(self, model_input_dict):
-        if "inpaint_mask_dilation" not in model_input_dict:
+        if isinstance(model_input_dict, torch.Tensor):
+            model_input_dict = {"rgb": model_input_dict}
             model_input_dict["inpaint_mask_dilation"] = 5
+            
+        elif isinstance(model_input_dict, dict):
+            if "inpaint_mask_dilation" not in model_input_dict:
+                model_input_dict["inpaint_mask_dilation"] = 5
         x = model_input_dict["rgb"]  # (B,3,H,W)
         rgb_in = self.dinov3.preprocess_image(x)
         tokens_list = self.dinov3(rgb_in)[

@@ -59,6 +59,8 @@ parameters:
     value: 1  # Dilation kernel size (pixels) for inpaint mask - Must be odd
   USE_TORCH_COMPILE:  # Enable PyTorch 2.0 torch.compile for faster training (experimental)
     value: False
+  USE_DATAPARALLEL: 
+    value: True
 
   ### DATA                                                                      
   DATASETS:

@@ -65,6 +65,8 @@ parameters:
 
   USE_TORCH_COMPILE:  # Enable PyTorch 2.0 torch.compile for faster training (experimental)
     value: False
+  USE_DATAPARALLEL: 
+    value: True
 
   ### DATA                                                                      
   DATASETS:

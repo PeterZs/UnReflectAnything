@@ -1347,11 +1347,13 @@ class Engine:
 
     def _save_checkpoint(self, epoch, is_best=False):
         """Save model checkpoint with enhanced state information"""
+        # Save unwrapped state dict when using DataParallel so checkpoints are portable
+        model_for_save = self.model.module if isinstance(self.model, nn.DataParallel) else self.model
         checkpoint = {
             "epoch": epoch,
-            "model_state_dict": self.model.state_dict(),
-            "model_class_name": self.model.__class__.__name__,
-            "model_class_module": self.model.__class__.__module__,
+            "model_state_dict": model_for_save.state_dict(),
+            "model_class_name": model_for_save.__class__.__name__,
+            "model_class_module": model_for_save.__class__.__module__,
             "optimizer_state_dict": self.optimizer.state_dict(),
             "config": self.config,
             "runname": getattr(self, "runname", None),
@@ -1739,7 +1741,13 @@ class Engine:
             checkpoint = torch.load(
                 checkpoint_path, map_location=self.device, weights_only=False
             )
-            self.model.load_state_dict(checkpoint["model_state_dict"])
+            state_dict = checkpoint["model_state_dict"]
+            # Load into unwrapped module when DataParallel; strip "module." prefix if checkpoint was saved with DP
+            if isinstance(self.model, nn.DataParallel):
+                state_dict = {k.replace("module.", "", 1) if k.startswith("module.") else k: v for k, v in state_dict.items()}
+                self.model.module.load_state_dict(state_dict)
+            else:
+                self.model.load_state_dict(state_dict)
             self.optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
             # Load schedulers if present (support both new and legacy keys)
             try:
@@ -1889,9 +1897,14 @@ class Engine:
             self.logger.error("Failed to load checkpoint data")
             return False
 
-        # Load model state
+        # Load model state (into unwrapped module when DataParallel)
         try:
-            self.model.load_state_dict(checkpoint_data["model_state_dict"])
+            state_dict = checkpoint_data["model_state_dict"]
+            if isinstance(self.model, nn.DataParallel):
+                state_dict = {k.replace("module.", "", 1) if k.startswith("module.") else k: v for k, v in state_dict.items()}
+                self.model.module.load_state_dict(state_dict)
+            else:
+                self.model.load_state_dict(state_dict)
             self.logger.info("Loaded model state from checkpoint", context="RESUME")
         except Exception as e:
             self.logger.error(f"Failed to load model state: {e}")

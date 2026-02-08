@@ -205,12 +205,14 @@ def optimizers(model, config):
             f"Please set these in the config file. Use 0.0 to freeze a component."
         )
     
-    # Build param groups deterministically
+    # Build param groups deterministically.
+    # When model is nn.DataParallel, use model.module so parameter names match (no "module." prefix).
+    effective_model = model.module if isinstance(model, torch.nn.DataParallel) else model
     encoder_params = []
     token_params = []
     decoder_param_groups = {}  # decoder_name -> list of params
-    
-    for name, p in model.named_parameters():
+
+    for name, p in effective_model.named_parameters():
         # if not p.requires_grad:
         #     continue
         if name.startswith("dinov3."):
@@ -365,10 +367,10 @@ def schedulers(optimizer, config, training_dl):
         cosine_scheduler = scheduler_config.get("COSINE")
         batches_per_epoch = len(training_dl)  # int: number of batches per epoch
         n_epochs = config.get("EPOCHS")  # int: number of epochs
-        n_peaks = cosine_scheduler.get("N_PERIODS", 1)  # int: number of cosine peaks
+        n_periods = cosine_scheduler.get("N_PERIODS", 0.5)  # int: number of cosine peaks
         T_max = (
             n_epochs * batches_per_epoch
-        ) // n_peaks // 2 - 1  # int: steps per peak
+        ) // n_periods // 2 - 1  # int: steps per peak
         cosine_scheduler = scheduler_config.get("COSINE")
         LRscheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
             optimizer,

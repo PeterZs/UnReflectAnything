@@ -57,7 +57,8 @@ parameters:
     value: 1  # Dilation kernel size (pixels) for inpaint mask - Must be odd
   USE_TORCH_COMPILE:  # Enable PyTorch 2.0 torch.compile for faster training (experimental)
     value: False
-
+  USE_DATAPARALLEL: 
+    value: True
   ### DATA                                                                      
   DATASETS:
     value:
@@ -199,7 +200,7 @@ parameters:
         PATIENCE: 5  # Number of epochs to wait before reducing LR
         FACTOR: 0.1  # Factor by which LR is reduced (new_lr = old_lr * factor)
       COSINE:  # CosineAnnealingLR scheduler (cosine annealing schedule)
-        N_PERIODS: 1  # Number of cosine periods over training
+        N_PERIODS: 0.5  # Number of cosine periods over training
       # STEPWISE:  # StepLR scheduler (reduces LR at fixed step intervals)
       #   N_STEPS: 4  # Number of times to reduce LR during training
       #   GAMMA: 0.5  # Factor by which LR is reduced at each step (new_lr = old_lr * gamma)

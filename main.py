@@ -25,7 +25,9 @@ import utilities.engine_initializers as initialize
 logger = get_logger(__name__).set_context("IMPORT")
 
 
-def create_model_from_config(config: DotMap, device: torch.device, verbose: bool = True):
+def create_model_from_config(
+    config: DotMap, device: torch.device, verbose: bool = True, use_data_parallel: Optional[bool] = None
+):
     """
     Create the RGBPOLDecomposer model from configuration.
     
@@ -37,8 +39,12 @@ def create_model_from_config(config: DotMap, device: torch.device, verbose: bool
         config (DotMap): Configuration dictionary containing model parameters including:
             - MODEL: Model architecture configuration
             - DATASETS: Dataset configurations for extracting target image size
+            - USE_DATAPARALLEL: If True, skip torch.compile and use primary GPU (for nn.DataParallel wrapping).
+            - USE_TORCH_COMPILE: If True, compile the model (ignored when USE_DATAPARALLEL is True).
         device (torch.device): PyTorch device to place the model on (e.g., 'cuda' or 'cpu')
         verbose: If True, print/log progress information. Defaults to True.
+        use_data_parallel: Override config USE_DATAPARALLEL. If None, read from config. When True,
+            torch.compile is skipped and device is forced to cuda:0 when multiple GPUs are available.
 
     Returns:
         RGBPOLDecomposer: The initialized model ready for training or inference
@@ -47,7 +53,15 @@ def create_model_from_config(config: DotMap, device: torch.device, verbose: bool
         The model expects input tensors of shape [B×3×H×W] for RGB images and 
         [B×3×H×W] for polarization images, where B is batch size, H and W are 
         height and width respectively.
+        For DataParallel: set USE_DATAPARALLEL=True in config (or use_data_parallel=True), then wrap
+        the returned model with nn.DataParallel(model). torch.compile is incompatible with DataParallel.
     """
+    # Resolve DataParallel mode: explicit arg overrides config
+    dp_mode = use_data_parallel if use_data_parallel is not None else config.get("USE_DATAPARALLEL", False)
+    if dp_mode and device.type == "cuda" and torch.cuda.device_count() > 1:
+        device = torch.device("cuda:0")
+        if verbose:
+            logger.info("DataParallel mode: using primary device cuda:0 and skipping torch.compile", context="MODEL")
     # Access model configuration from the nested structure
     model_config = config.get("MODEL", {})  # .get("value", {})
 
@@ -204,7 +218,9 @@ def create_model_from_config(config: DotMap, device: torch.device, verbose: bool
         model_kwargs["token_inpainter_cfg"] = token_inpainter_cfg
     
     model = model_class(**model_kwargs).to(device)
-    if config.get("USE_TORCH_COMPILE", True):
+    # torch.compile is incompatible with nn.DataParallel; skip when using DataParallel
+    should_compile = config.get("USE_TORCH_COMPILE", True) and not dp_mode
+    if should_compile:
         start_time = time.time()
         model = torch.compile(
             model,
@@ -214,46 +230,24 @@ def create_model_from_config(config: DotMap, device: torch.device, verbose: bool
         )
         end_time = time.time()
         if verbose:
-            logger.info(f"Torch Compile time: {end_time - start_time:.2f} seconds",context="MODEL")
+            logger.info(f"Torch Compile time: {end_time - start_time:.2f} seconds", context="MODEL")
     torch.cuda.empty_cache()
-    # from diffusers import AutoencoderKL, UNet2DConditionModel, DDPMScheduler
-    # from models import DINOv3
-    # from sd_decomposer import StableDiffusionDecomposer
-
-    # # 1) DINO encoder (use your config to return selected_hidden_states)
-    # dino = DINOv3({
-    #     "model_name": "facebook/dinov3-vitb16-pretrain-lvd1689m",
-    #     "image_size": 224,
-    #     "freeze_backbone": True,
-    #     "return_selected_layers": [3, 6, 9, 12],   # example
-    #     "return_as_feature_maps": False,
-    # }).cuda()
-
-    # # 2) SD parts (load checkpoints compatible with each other; SD 1.5 shown as example)
-    # sd_vae  = AutoencoderKL.from_pretrained("runwayml/stable-diffusion-v1-5", subfolder="vae").cuda()
-    # sd_unet = UNet2DConditionModel.from_pretrained("runwayml/stable-diffusion-v1-5", subfolder="unet").cuda()
-    # sched   = DDPMScheduler.from_pretrained("runwayml/stable-diffusion-v1-5", subfolder="scheduler")
-
-    # # 3) Model
-    # model = StableDiffusionDecomposer(
-    #     dinov3=dino,
-    #     sd_vae=sd_vae,
-    #     sd_unet=sd_unet,
-    #     scheduler=sched,
-    #     adapter_cfg=dict(ctx_dim=768, ctx_len=77, n_layers_proj=2, n_heads=8,
-    #                      reduce_mode="learned_pool", layer_fusion="weighted_sum"),
-    #     freeze_vae=True,
-    #     freeze_unet=True,               # start frozen
-    #     unfreeze_unet_attn_qkv=False,   # optionally True later
-    # ).to(device)
-
-    
     if verbose:
         logger.info(
             f"Model with class {model.__class__.__name__} created with {sum(p.numel() for p in model.parameters()):,} parameters",
             context="MODEL",
         )
 
+    return model
+
+
+def maybe_wrap_data_parallel(model: torch.nn.Module, config: DotMap):
+    """
+    Wrap model in nn.DataParallel when config.USE_DATAPARALLEL is True and multiple GPUs are available.
+    No-op otherwise. Call after create_model_from_config when using multi-GPU DataParallel.
+    """
+    if config.get("USE_DATAPARALLEL", False) and torch.cuda.is_available() and torch.cuda.device_count() > 1:
+        return torch.nn.DataParallel(model)
     return model
 
 
@@ -616,6 +610,7 @@ def run_pipeline(mode: str = "train", config: Optional[Dict[str, Any]] = None) -
                 
                 # Create model
                 model = create_model_from_config(config, DEVICE)
+                model = maybe_wrap_data_parallel(model, config)
 
                 # Create datasets for training
                 dataset = create_datasets_from_config(config)
@@ -651,6 +646,7 @@ def run_pipeline(mode: str = "train", config: Optional[Dict[str, Any]] = None) -
                 # Normal training (new run)
                 # Create model
                 model = create_model_from_config(config, DEVICE)
+                model = maybe_wrap_data_parallel(model, config)
 
                 # Create datasets for training
                 dataset = create_datasets_from_config(config)
@@ -688,6 +684,7 @@ def run_pipeline(mode: str = "train", config: Optional[Dict[str, Any]] = None) -
 
             # Create model and datasets using the current config
             model = create_model_from_config(config, DEVICE)
+            model = maybe_wrap_data_parallel(model, config)
             dataset = create_datasets_from_config(config)
 
             # Initialize engine in resume mode, resuming the existing WandB run
