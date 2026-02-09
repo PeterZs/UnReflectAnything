@@ -9,7 +9,7 @@ Core Datasets:
 - MultiDataset: Combines multiple datasets for training
 
 Polarization Datasets:
-- RGBP_Dataset: Base class for RGB + Polarization data processing
+- UnReflectAnything_Dataset: Base class for RGB + Polarization data processing
 - SCRREAM_Dataset: SCRREAM dataset for reflection removal
 - HOUSECAT6D_Dataset: HOUSECAT6D dataset for 6D pose estimation
 - POLARGB_Dataset: PolaRGB dataset for polarization-guided processing
@@ -25,12 +25,16 @@ Utilities:
 """
 
 # from .highlight import HighlightDataset
-from .rgbp import (
+from .unreflectdataset import UnReflectAnything_Dataset
+from .wrappers import (
+    SCRREAM_Dataset,
     HOUSECAT6D_Dataset,
     POLARGB_Dataset,
-    RGBP_Dataset,
-    SCRREAM_Dataset,
-    from_config,
+    SCARED_Dataset,
+    STEREOMIS_TRACKING_Dataset,
+    CHOLEC80_Dataset,
+    CROMO_Dataset,
+    PSD_Dataset,    
 )
 from .utils import (
     adapt_intrinsics_two_step,
@@ -41,16 +45,17 @@ from .utils import (
 
 __all__ = [
     # Core datasets
-    # "HighlightDataset",
     # Specialized datasets
     # RGBP/Polarization datasets
-    "RGBP_Dataset",
+    "UnReflectAnything_Dataset",
     "SCRREAM_Dataset",
     "HOUSECAT6D_Dataset",
     "POLARGB_Dataset",
-    # Dataset creation functions
-    "initialize_from_config",
-    "from_config",
+    "SCARED_Dataset",
+    "STEREOMIS_TRACKING_Dataset",
+    "CHOLEC80_Dataset",
+    "CROMO_Dataset",
+    "PSD_Dataset",
     # Utility functions
     "adapt_intrinsics_two_step",
     "split_videos",

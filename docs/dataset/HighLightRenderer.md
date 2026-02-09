@@ -1,8 +1,8 @@
-# HighLightRenderer
+# HighlightRenderer
 
 ## Overview
 
-The `HighLightRenderer` class is a PyTorch module that renders realistic reflection artifacts on images based on 3D point clouds, light sources, and surface geometry. It simulates specular reflections using the law of reflection and the Phong lighting model, making it useful for computer vision tasks that require realistic lighting effects.
+The `HighlightRenderer` class is a PyTorch module that renders realistic reflection artifacts on images based on 3D point clouds, light sources, and surface geometry. It simulates specular reflections using the law of reflection and the Phong lighting model, making it useful for computer vision tasks that require realistic lighting effects.
 
 ## Key Features
 
@@ -15,10 +15,10 @@ The `HighLightRenderer` class is a PyTorch module that renders realistic reflect
 ## Class Definition
 
 ```python
-class HighLightRenderer(nn.Module):
+class HighlightRenderer(nn.Module):
     def __init__(self, height, width, patch_size=16):
         """
-        Initialize the HighLightRenderer.
+        Initialize the HighlightRenderer.
         
         Args:
             height (int): Image height in pixels
@@ -81,7 +81,7 @@ The `forward()` method returns a dictionary containing:
 
 ```python
 import torch
-from projections import HighLightRenderer
+from projections import HighlightRenderer
 
 # Initialize renderer
 renderer = HighLightRenderer(height=480, width=640)

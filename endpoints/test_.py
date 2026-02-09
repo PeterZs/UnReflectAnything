@@ -44,6 +44,7 @@ def test(
     try:
         sys.argv = new_argv
         import main
+
         main.run_pipeline(mode="test")
     finally:
         sys.argv = argv_backup

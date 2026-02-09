@@ -111,12 +111,12 @@ def mat2euler(mat: torch.Tensor) -> torch.Tensor:
     translation = mat[..., :3, 3]
 
     # Extract the components needed for conversion
-    r11, r12, r13 = (
+    r11, _r12, _r13 = (
         rotation_mat[..., 0, 0],
         rotation_mat[..., 0, 1],
         rotation_mat[..., 0, 2],
     )
-    r21, r22, r23 = (
+    r21, _r22, _r23 = (
         rotation_mat[..., 1, 0],
         rotation_mat[..., 1, 1],
         rotation_mat[..., 1, 2],

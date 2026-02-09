@@ -3,7 +3,7 @@
 
 Base dataset implementation for monocular 3D camera pose estimation.
 
-This module provides the core `Mono3D_Dataset` class that handles loading videos, frames, 
+This module provides the core `Mono3D_Dataset` class that handles loading videos, frames,
 and camera poses, and provides methods for curriculum learning, augmentation, and various output formats.
 """
 
@@ -21,7 +21,6 @@ from natsort import natsorted
 from io import BytesIO
 from google.cloud import storage
 
-import projections as proj
 import geometry
 from utilities import closest_multiple
 from utilities import generate_random_pose_tensor
@@ -78,7 +77,7 @@ class Mono3D_Dataset(Dataset):
         height=384,
         width=384
     )
-    
+
     # With augmentation
     dataset = Mono3D_Dataset(
         path="path/to/dataset",
@@ -86,7 +85,7 @@ class Mono3D_Dataset(Dataset):
         color_augmentation_prob=0.3,
         curriculum_factor=2
     )
-    
+
     # Get a sample
     sample = dataset[0]
     framestack = sample["framestack"]  # Shape: (2, 3, H, W)
@@ -229,7 +228,7 @@ class Mono3D_Dataset(Dataset):
             curriculum_factor=2,
             geometric_augmentation_prob=0.3
         )
-        
+
         # Dataset for inference (no augmentation)
         dataset = Mono3D_Dataset(
             path="/path/to/dataset",
@@ -299,7 +298,7 @@ class Mono3D_Dataset(Dataset):
                     )
                 self._preload_dataset(verbose)
                 if verbose:
-                    logger.info(f"Preloading complete!")
+                    logger.info("Preloading complete!")
         else:
             # Handle empty dataset case
             self._initialize_empty_dataset(verbose)
@@ -503,7 +502,7 @@ class Mono3D_Dataset(Dataset):
         self.Tinvlist = []
 
         if verbose:
-            logger.info(f": [orange3]No videos loaded[/orange3]")
+            logger.info(": [orange3]No videos loaded[/orange3]")
 
     def _load_videos(
         self, path, vids, exclude, short, fewframes, nvids, skip_order_check, verbose
@@ -655,7 +654,6 @@ class Mono3D_Dataset(Dataset):
         Returns:
             int: Number of frames loaded from this video
         """
-        frames_in_video = 0
         path = path.rstrip("/") if path else ""
 
         if self.is_gcs:
@@ -1538,7 +1536,6 @@ class Mono3D_Dataset(Dataset):
             output["Tt"] = self.Tlist[idx]
 
         return output
-    
 
 
 class SCARED(Mono3D_Dataset):
@@ -1568,10 +1565,10 @@ class SCARED(Mono3D_Dataset):
 
     ```python
     from dataset import SCARED
-    
+
     # Basic usage with default settings
     scared_dataset = SCARED(path="/path/to/scared/dataset")
-    
+
     # With custom configuration
     scared_dataset = SCARED(
         path="/path/to/scared/dataset",
@@ -1581,7 +1578,7 @@ class SCARED(Mono3D_Dataset):
         geometric_augmentation_prob=0.3,
         curriculum_factor=2
     )
-    
+
     # Get available video names
     video_names = SCARED.videonames()
     print(f"Available videos: {video_names}")
@@ -1610,7 +1607,7 @@ class SCARED(Mono3D_Dataset):
         ```python
         # Initialize with default SCARED settings
         dataset = SCARED(path="/path/to/scared")
-        
+
         # Override default settings
         dataset = SCARED(
             path="/path/to/scared",

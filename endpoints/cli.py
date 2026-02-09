@@ -16,6 +16,7 @@ from pathlib import Path
 def _config_path() -> Path | None:
     """Path to the single CLI messages config: env UNREFLECTANYTHING_CLI_MESSAGES or cwd/assets/cli_messages.json."""
     import os
+
     if os.environ.get("UNREFLECTANYTHING_CLI_MESSAGES"):
         p = Path(os.environ["UNREFLECTANYTHING_CLI_MESSAGES"])
         if p.is_file():
@@ -51,11 +52,17 @@ def _print_subcommand_startup_message(subcommand: str | None) -> None:
                     print(line, flush=True)
             else:
                 config_dir = config_path.parent
-                banner_path = (config_dir / banner) if not Path(banner).is_absolute() else Path(banner)
+                banner_path = (
+                    (config_dir / banner)
+                    if not Path(banner).is_absolute()
+                    else Path(banner)
+                )
                 if not banner_path.is_file():
                     banner_path = Path.cwd() / banner
                 if banner_path.is_file():
-                    print(banner_path.read_text(encoding="utf-8"), end="\n\n", flush=True)
+                    print(
+                        banner_path.read_text(encoding="utf-8"), end="\n\n", flush=True
+                    )
     if subcommand is not None:
         msg = data.get(subcommand)
         if isinstance(msg, str) and msg:
@@ -65,6 +72,7 @@ def _print_subcommand_startup_message(subcommand: str | None) -> None:
 # =============================================================================
 # CLI Command Handlers - Thin wrappers around API functions
 # =============================================================================
+
 
 def _run_inference(args: argparse.Namespace) -> None:
     """Run inference - calls inference_.inference()."""
@@ -95,11 +103,11 @@ def _run_train(args: argparse.Namespace) -> None:
     # Parse passthrough arguments into overrides dict
     overrides = {}
     passthrough = getattr(args, "passthrough", []) or []
-    
+
     resume_run = None
     boot = False
     config = args.config
-    
+
     i = 0
     while i < len(passthrough):
         arg = passthrough[i]
@@ -143,7 +151,7 @@ def _run_test(args: argparse.Namespace) -> None:
     overrides = {}
     passthrough = getattr(args, "passthrough", []) or []
     config = args.config
-    
+
     i = 0
     while i < len(passthrough):
         arg = passthrough[i]
@@ -208,6 +216,7 @@ def _run_download_weights(args: argparse.Namespace) -> None:
 def _run_cache_dir(args: argparse.Namespace) -> None:
     """Print the cache directory (base or a specific asset subdir)."""
     from unreflectanything._shared import get_cache_dir
+
     if args.weights:
         path = get_cache_dir("weights")
     elif args.images:
@@ -306,6 +315,7 @@ def _run_cite(args: argparse.Namespace) -> None:
 def _run_sweep(args: argparse.Namespace) -> None:
     """Launch a Weights & Biases sweep."""
     import subprocess
+
     config_path = Path(args.config).resolve()
     if not config_path.exists():
         sys.exit(f"Config file not found: {config_path}")
@@ -316,6 +326,7 @@ def _run_sweep(args: argparse.Namespace) -> None:
 def _run_agent(args: argparse.Namespace) -> None:
     """Run a W&B sweep agent."""
     import subprocess
+
     cmd = ["wandb", "agent"] + (args.passthrough or [])
     sys.exit(subprocess.run(cmd).returncode)
 
@@ -325,40 +336,48 @@ def _run_completion(args: argparse.Namespace) -> None:
     try:
         from importlib.resources import files
         from rich import print
+
         pkg = files("unreflectanything")
     except Exception:
         import importlib.resources
+
         pkg = importlib.resources.files("unreflectanything")
     shell = (args.shell or "").strip().lower()
     if "zsh" in shell:
         path = pkg / "data" / "unreflect-completion.zsh"
         print(
-              """\nRun the following command to load the completion script
+            """\nRun the following command to load the completion script
 
 [cyan]echo 'source <(unreflectanything completion zsh)' >> ~/.zshrc[/]
 
 [white]It will append the following lines to your ~/.zshrc file:\n
 ------------------------------------------------------------------------------------------------
-""",end=""
-)
+""",
+            end="",
+        )
     else:
         path = pkg / "data" / "unreflect-completion.bash"
         print(
-              """\nRun the following command to load the completion script
+            """\nRun the following command to load the completion script
 
 [cyan]echo 'source <(unreflectanything completion bash)' >> ~/.bashrc[/]
 
 [white]It will append the following lines to your ~/.bashrc file:\n
 ------------------------------------------------------------------------------------------------
-""",end=""
-)
+""",
+            end="",
+        )
     text = path.read_text(encoding="utf-8")
     print(text, end="")
-    print("------------------------------------------------------------------------------------------------")
+    print(
+        "------------------------------------------------------------------------------------------------"
+    )
+
 
 # =============================================================================
 # Main Entry Point
 # =============================================================================
+
 
 def main() -> None:
     """Entry point for the unreflectanything / unreflect / ura console script."""
@@ -366,7 +385,9 @@ def main() -> None:
         prog=Path(sys.argv[0]).name or "unreflectanything",
         description="UnReflectAnything: remove specular reflections from RGB images.",
     )
-    subparsers = parser.add_subparsers(dest="subcommand", metavar="SUBCOMMAND", required=True)
+    subparsers = parser.add_subparsers(
+        dest="subcommand", metavar="SUBCOMMAND", required=True
+    )
 
     # -------------------------------------------------------------------------
     # inference
@@ -382,31 +403,36 @@ def main() -> None:
         help="Input image file or directory",
     )
     p_inf.add_argument(
-        "-o", "--output",
+        "-o",
+        "--output",
         type=str,
         default=None,
         help="Output file/directory (default: ./output/)",
     )
     p_inf.add_argument(
-        "-w", "--weights",
+        "-w",
+        "--weights",
         type=str,
         default=None,
         help="Path to model weights (default: ~/.cache/unreflectanything/weights/)",
     )
     p_inf.add_argument(
-        "-c", "--config",
+        "-c",
+        "--config",
         type=str,
         default=None,
         help="Path to inference config YAML file",
     )
     p_inf.add_argument(
-        "-d", "--device",
+        "-d",
+        "--device",
         type=str,
         default="cuda",
         help="CUDA device (e.g. cuda, cuda:0, cuda:1) or cpu (default: cuda)",
     )
     p_inf.add_argument(
-        "-b", "--batch-size",
+        "-b",
+        "--batch-size",
         type=int,
         default=4,
         help="Batch size for inference (default: 4)",
@@ -423,7 +449,8 @@ def main() -> None:
         help="Don't resize output to match original input dimensions",
     )
     p_inf.add_argument(
-        "-v", "--verbose",
+        "-v",
+        "--verbose",
         action="store_true",
         help="Enable verbose output",
     )
@@ -438,7 +465,8 @@ def main() -> None:
         description="Train the UnReflectAnything model using the specified configuration.",
     )
     p_train.add_argument(
-        "-c", "--config",
+        "-c",
+        "--config",
         type=str,
         default="config_train.yaml",
         help="Path to training config YAML (default: config_train.yaml)",
@@ -459,7 +487,8 @@ def main() -> None:
         description="Run evaluation on a trained model checkpoint.",
     )
     p_test.add_argument(
-        "-c", "--config",
+        "-c",
+        "--config",
         type=str,
         default="config_test.yaml",
         help="Path to test config YAML (default: config_test.yaml)",
@@ -505,7 +534,8 @@ def main() -> None:
         help="Download all assets (weights, images, notebooks, configs)",
     )
     p_dl.add_argument(
-        "-o", "--output-dir",
+        "-o",
+        "--output-dir",
         type=str,
         default=None,
         help="Output directory (default: ~/.cache/unreflectanything/)",
@@ -517,7 +547,8 @@ def main() -> None:
         help="Weights variant to download (default: default)",
     )
     p_dl.add_argument(
-        "-f", "--force",
+        "-f",
+        "--force",
         action="store_true",
         help="Force re-download even if files exist",
     )
@@ -531,7 +562,8 @@ def main() -> None:
         help="Download pretrained weights (alias for 'download --weights')",
     )
     p_dl_weights.add_argument(
-        "-o", "--output-dir",
+        "-o",
+        "--output-dir",
         type=str,
         default=None,
         help="Directory to save weights (default: cache dir)",
@@ -543,7 +575,8 @@ def main() -> None:
         help="Weights variant to download (default: default)",
     )
     p_dl_weights.add_argument(
-        "-f", "--force",
+        "-f",
+        "--force",
         action="store_true",
         help="Re-download even if already present",
     )
@@ -598,31 +631,36 @@ def main() -> None:
         help="Verify weights file exists and loads into model with no key alignment errors",
     )
     p_verify.add_argument(
-        "--path", "-p",
+        "--path",
+        "-p",
         type=str,
         default=None,
         help="Dataset root directory (required when --dataset)",
     )
     p_verify.add_argument(
-        "--weights-path", "-w",
+        "--weights-path",
+        "-w",
         type=str,
         default=None,
         help="Path to weights file (optional when --weights; default: cache)",
     )
     p_verify.add_argument(
-        "--type", "-t",
+        "--type",
+        "-t",
         type=str,
         default=None,
         help="Dataset type: SCRREAM, HOUSECAT6D, POLARGB, etc. (auto-detect if not specified; only with --dataset)",
     )
     p_verify.add_argument(
-        "--config", "-c",
+        "--config",
+        "-c",
         type=str,
         default=None,
         help="Config file for dataset verification (only with --dataset)",
     )
     p_verify.add_argument(
-        "--model-config", "-m",
+        "--model-config",
+        "-m",
         type=str,
         default=None,
         help="Model config YAML for weights verification if checkpoint has no embedded config (only with --weights)",
@@ -648,13 +686,15 @@ def main() -> None:
         help="Reference (ground truth) image or directory",
     )
     p_eval.add_argument(
-        "--metrics", "-m",
+        "--metrics",
+        "-m",
         type=str,
         default=None,
         help="Comma-separated list of metrics: psnr,ssim,mse,deltaE2000,gmsd,dists",
     )
     p_eval.add_argument(
-        "--all", "-a",
+        "--all",
+        "-a",
         action="store_true",
         help="Compute all available metrics",
     )
@@ -665,7 +705,8 @@ def main() -> None:
         help="Optional mask for masked evaluation",
     )
     p_eval.add_argument(
-        "-o", "--output-file",
+        "-o",
+        "--output-file",
         type=str,
         default=None,
         help="Save results to JSON file",
@@ -759,13 +800,13 @@ def main() -> None:
     # -------------------------------------------------------------------------
     # Parse and execute
     # -------------------------------------------------------------------------
-    
+
     # Banner for main help (no subcommand): show before parsing
     if len(sys.argv) <= 2 and (len(sys.argv) == 1 or sys.argv[1] in ("-h", "--help")):
         _print_subcommand_startup_message(None)
 
     args = parser.parse_args()
-    
+
     if args.subcommand is None:
         parser.print_help()
         sys.exit(1)

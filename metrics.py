@@ -4,6 +4,7 @@ from typing import Literal, Optional, Dict, Tuple
 import torch
 import torch.nn.functional as F
 
+
 # =========================
 # Helpers
 # =========================
@@ -12,16 +13,19 @@ def _to_float_tensor(x: torch.Tensor, device=None) -> torch.Tensor:
         device = x.device
     return x.to(device=device, dtype=torch.float32)
 
+
 def _validate_pair(x: torch.Tensor, y: torch.Tensor):
     if x.shape != y.shape:
         raise ValueError(f"Input shapes must match, got {x.shape} and {y.shape}.")
     if x.dim() != 4:
         raise ValueError(f"Inputs must be BCHW tensors, got dim={x.dim()}.")
 
+
 def _infer_data_range(x: torch.Tensor) -> float:
     # Heuristic: if max > 1.5 assume [0,255]; else [0,1]
     mx = float(x.detach().max())
     return 255.0 if mx > 1.5 else 1.0
+
 
 def _prepare_mask(x: torch.Tensor, mask: Optional[torch.Tensor]) -> torch.Tensor:
     """
@@ -33,11 +37,11 @@ def _prepare_mask(x: torch.Tensor, mask: Optional[torch.Tensor]) -> torch.Tensor
         return torch.ones((B, 1, H, W), dtype=torch.float32, device=x.device)
 
     m = mask
-    if m.dim() == 2:            # HW
+    if m.dim() == 2:  # HW
         m = m.unsqueeze(0).unsqueeze(0)
-    elif m.dim() == 3:          # BHW
+    elif m.dim() == 3:  # BHW
         m = m.unsqueeze(1)
-    elif m.dim() == 4:          # already BCHW-like
+    elif m.dim() == 4:  # already BCHW-like
         pass
     else:
         raise ValueError("mask must be 2D, 3D, or 4D (HW, BHW, or BCHW-like)")
@@ -49,11 +53,16 @@ def _prepare_mask(x: torch.Tensor, mask: Optional[torch.Tensor]) -> torch.Tensor
         # If someone passed per-channel mask, collapse to a single channel via any>0
         m = (m > 0).any(dim=1, keepdim=True).to(m.dtype)
     if m.shape[2] != H or m.shape[3] != W:
-        raise ValueError(f"mask spatial size must match inputs: got {m.shape[-2:]}, need {(H,W)}")
+        raise ValueError(
+            f"mask spatial size must match inputs: got {m.shape[-2:]}, need {(H, W)}"
+        )
 
     return m.to(device=x.device, dtype=torch.float32).clamp(0, 1)
 
-def _masked_reduce_per_image(values: torch.Tensor, mask: torch.Tensor, eps: float = 1e-12) -> torch.Tensor:
+
+def _masked_reduce_per_image(
+    values: torch.Tensor, mask: torch.Tensor, eps: float = 1e-12
+) -> torch.Tensor:
     """
     values: [B, C, H, W] or [B, 1, H, W]
     mask:   [B, 1, H, W] in {0,1}
@@ -74,15 +83,20 @@ def _masked_reduce_per_image(values: torch.Tensor, mask: torch.Tensor, eps: floa
     out = torch.where(wsum > 0, out, torch.full_like(out, float("nan")))
     return out
 
+
 def _to_01(x: torch.Tensor, data_range: Optional[float]) -> torch.Tensor:
     dr = _infer_data_range(x) if data_range is None else float(data_range)
     return (x / dr).clamp(0.0, 1.0)
+
 
 def _to_m11(x_01: torch.Tensor) -> torch.Tensor:
     # [0,1] -> [-1,1] for LPIPS
     return x_01 * 2.0 - 1.0
 
-def _composite_inside_mask(x: torch.Tensor, y: torch.Tensor, mask01: torch.Tensor) -> torch.Tensor:
+
+def _composite_inside_mask(
+    x: torch.Tensor, y: torch.Tensor, mask01: torch.Tensor
+) -> torch.Tensor:
     """
     Return x' = x*mask + y*(1-mask). Useful to force equality outside mask
     so a global metric effectively measures only inside-mask differences.
@@ -114,7 +128,7 @@ def _rgb_to_lab(rgb: torch.Tensor) -> torch.Tensor:
 
     def _f(t: torch.Tensor) -> torch.Tensor:
         return torch.where(
-            t > delta ** 3,
+            t > delta**3,
             torch.pow(t.clamp_min(eps), 1.0 / 3.0),
             t / (3.0 * delta * delta) + 4.0 / 29.0,
         )
@@ -138,17 +152,23 @@ def _ring_mask(mask01: torch.Tensor, ring: int = 3) -> torch.Tensor:
     ero = 1.0 - inv_dil
     return (dil - ero).clamp(0, 1)
 
+
 # =========================
 # LPIPS cache
 # =========================
 _lpips_cache: Dict[Tuple[str, str], torch.nn.Module] = {}
 
-def _get_cached_lpips(net: Literal["alex", "vgg", "squeeze"], device: torch.device) -> torch.nn.Module:
+
+def _get_cached_lpips(
+    net: Literal["alex", "vgg", "squeeze"], device: torch.device
+) -> torch.nn.Module:
     pass
     try:
         import lpips  # type: ignore
     except Exception as e:
-        raise ImportError("lpips package is required for lpips_metric. Install via `pip install lpips`.") from e
+        raise ImportError(
+            "lpips package is required for lpips_metric. Install via `pip install lpips`."
+        ) from e
 
     key = (str(net), str(device))
     loss_fn = _lpips_cache.get(key)
@@ -179,6 +199,7 @@ def _get_cached_lpips(net: Literal["alex", "vgg", "squeeze"], device: torch.devi
         _lpips_cache[key] = loss_fn
     return loss_fn
 
+
 # =========================
 # 1) MSE (masked)
 # =========================
@@ -202,6 +223,7 @@ def mse_metric(
     per_image = _masked_reduce_per_image(sqerr.mean(dim=1, keepdim=True), m)
     return per_image.mean() if reduction == "mean" else per_image
 
+
 # =========================
 # 2) PSNR (masked)
 # =========================
@@ -224,10 +246,15 @@ def psnr_metric(
 
     # m = _prepare_mask(x, mask)
     sqerr = (x - y) ** 2
-    mse_per = _masked_reduce_per_image(sqerr.mean(dim=1, keepdim=True), torch.ones_like(x)).clamp_min(eps)  # [B]
-    psnr_per = 10.0 * torch.log10((data_range ** 2) / mse_per)  # [B], NaN where mask empty
+    mse_per = _masked_reduce_per_image(
+        sqerr.mean(dim=1, keepdim=True), torch.ones_like(x)
+    ).clamp_min(eps)  # [B]
+    psnr_per = 10.0 * torch.log10(
+        (data_range**2) / mse_per
+    )  # [B], NaN where mask empty
 
     return psnr_per.mean() if reduction == "mean" else psnr_per
+
 
 # =========================
 # 3) SSIM (masked)
@@ -255,7 +282,7 @@ def ssim_metric(
     # Torch-only SSIM (Gaussian window)
     def _gaussian_kernel1d(ks: int, sigma: float, device, dtype):
         coords = torch.arange(ks, device=device, dtype=dtype) - ks // 2
-        g = torch.exp(-(coords ** 2) / (2 * sigma * sigma))
+        g = torch.exp(-(coords**2) / (2 * sigma * sigma))
         g = g / g.sum()
         return g
 
@@ -292,6 +319,7 @@ def ssim_metric(
     per_image = _masked_reduce_per_image(ssim_map, m)
     return per_image.mean() if reduction == "mean" else per_image
 
+
 # =========================
 # 4) LPIPS (masked via spatial map)
 # =========================
@@ -323,7 +351,7 @@ def ssim_metric(
 #     with torch.no_grad():
 #         lp_map = loss_fn(x_m11, y_m11)  # [B, 1, h, w]
 #         if lp_map.shape[-2:] != x01.shape[-2:]:
-#             # Use "nearest" - this is notably faster than bilinear, 
+#             # Use "nearest" - this is notably faster than bilinear,
 #             # and for mask reduction accuracy it's sufficient, since LPIPS is "fuzzy" spatially.
 #             lp_map = F.interpolate(lp_map, size=x01.shape[-2:], mode="nearest")
 #     per_image = _masked_reduce_per_image(lp_map, m)
@@ -331,6 +359,7 @@ def ssim_metric(
 #         return per_image.mean()
 #     else:
 #         return per_image
+
 
 # =========================
 # 5) DISTS (global or masked via composite)
@@ -352,7 +381,9 @@ def dists_metric(
     try:
         import piq  # type: ignore
     except Exception as e:
-        raise ImportError("piq package is required for dists_metric. Install via `pip install piq`.") from e
+        raise ImportError(
+            "piq package is required for dists_metric. Install via `pip install piq`."
+        ) from e
 
     if mask is not None:
         m = _prepare_mask(x01, mask)
@@ -360,8 +391,9 @@ def dists_metric(
         y01 = y01
 
     with torch.no_grad():
-        scores = piq.DISTS(reduction='none')(x01, y01)  # [B]
+        scores = piq.DISTS(reduction="none")(x01, y01)  # [B]
     return scores.mean() if reduction == "mean" else scores
+
 
 # =========================
 # 6) GMSD (global or masked via composite)
@@ -383,15 +415,18 @@ def gmsd_metric(
     try:
         import piq  # type: ignore
     except Exception as e:
-        raise ImportError("piq package is required for gmsd_metric. Install via `pip install piq`.") from e
+        raise ImportError(
+            "piq package is required for gmsd_metric. Install via `pip install piq`."
+        ) from e
 
     if mask is not None:
         m = _prepare_mask(x01, mask)
         x01 = _composite_inside_mask(x01, y01, m)
 
     with torch.no_grad():
-        scores = piq.gmsd(x01, y01, reduction='none')  # [B]
+        scores = piq.gmsd(x01, y01, reduction="none")  # [B]
     return scores.mean() if reduction == "mean" else scores
+
 
 # =========================
 # 7) ΔE2000 (CIEDE2000) color error (masked)
@@ -417,54 +452,66 @@ def deltaE2000_metric(
 
     # ΔE2000 implementation in torch
     def _deltaE00(lab1, lab2, eps=1e-12):
-        L1, a1, b1 = lab1[:,0], lab1[:,1], lab1[:,2]
-        L2, a2, b2 = lab2[:,0], lab2[:,1], lab2[:,2]
+        L1, a1, b1 = lab1[:, 0], lab1[:, 1], lab1[:, 2]
+        L2, a2, b2 = lab2[:, 0], lab2[:, 1], lab2[:, 2]
 
         kL = kC = kH = 1.0
-        C1 = torch.sqrt(a1*a1 + b1*b1 + eps)
-        C2 = torch.sqrt(a2*a2 + b2*b2 + eps)
+        C1 = torch.sqrt(a1 * a1 + b1 * b1 + eps)
+        C2 = torch.sqrt(a2 * a2 + b2 * b2 + eps)
         Cm = 0.5 * (C1 + C2)
         G = 0.5 * (1 - torch.sqrt((Cm**7) / (Cm**7 + 25**7) + eps))
         a1p = (1 + G) * a1
         a2p = (1 + G) * a2
-        C1p = torch.sqrt(a1p*a1p + b1*b1 + eps)
-        C2p = torch.sqrt(a2p*a2p + b2*b2 + eps)
-        h1p = torch.atan2(b1, a1p) % (2*math.pi)
-        h2p = torch.atan2(b2, a2p) % (2*math.pi)
+        C1p = torch.sqrt(a1p * a1p + b1 * b1 + eps)
+        C2p = torch.sqrt(a2p * a2p + b2 * b2 + eps)
+        h1p = torch.atan2(b1, a1p) % (2 * math.pi)
+        h2p = torch.atan2(b2, a2p) % (2 * math.pi)
 
         dLp = L2 - L1
         dCp = C2p - C1p
 
         dhp = h2p - h1p
-        dhp = torch.where(dhp >  math.pi, dhp - 2*math.pi, dhp)
-        dhp = torch.where(dhp < -math.pi, dhp + 2*math.pi, dhp)
-        dHp = 2.0 * torch.sqrt(C1p*C2p + eps) * torch.sin(dhp/2.0)
+        dhp = torch.where(dhp > math.pi, dhp - 2 * math.pi, dhp)
+        dhp = torch.where(dhp < -math.pi, dhp + 2 * math.pi, dhp)
+        dHp = 2.0 * torch.sqrt(C1p * C2p + eps) * torch.sin(dhp / 2.0)
 
         Lpm = 0.5 * (L1 + L2)
         Cpm = 0.5 * (C1p + C2p)
 
         hp_sum = h1p + h2p
-        hpm = torch.where(torch.abs(h1p - h2p) > math.pi,
-                          (hp_sum + 2*math.pi) / 2.0 - math.pi,
-                          hp_sum / 2.0)
+        hpm = torch.where(
+            torch.abs(h1p - h2p) > math.pi,
+            (hp_sum + 2 * math.pi) / 2.0 - math.pi,
+            hp_sum / 2.0,
+        )
 
-        T = 1 - 0.17*torch.cos(hpm - math.radians(30)) + \
-                0.24*torch.cos(2*hpm) + \
-                0.32*torch.cos(3*hpm + math.radians(6)) - \
-                0.20*torch.cos(4*hpm - math.radians(63))
+        T = (
+            1
+            - 0.17 * torch.cos(hpm - math.radians(30))
+            + 0.24 * torch.cos(2 * hpm)
+            + 0.32 * torch.cos(3 * hpm + math.radians(6))
+            - 0.20 * torch.cos(4 * hpm - math.radians(63))
+        )
 
-        Sl = 1 + (0.015 * (Lpm - 50)**2) / torch.sqrt(20 + (Lpm - 50)**2 + eps)
+        Sl = 1 + (0.015 * (Lpm - 50) ** 2) / torch.sqrt(20 + (Lpm - 50) ** 2 + eps)
         Sc = 1 + 0.045 * Cpm
         Sh = 1 + 0.015 * Cpm * T
 
-        Rt = -2 * torch.sqrt((Cpm**7) / (Cpm**7 + 25**7) + eps) * \
-             torch.sin(math.radians(60) * torch.exp(-((hpm - math.radians(275)) / math.radians(25))**2))
+        Rt = (
+            -2
+            * torch.sqrt((Cpm**7) / (Cpm**7 + 25**7) + eps)
+            * torch.sin(
+                math.radians(60)
+                * torch.exp(-(((hpm - math.radians(275)) / math.radians(25)) ** 2))
+            )
+        )
 
         dE = torch.sqrt(
-            (dLp / (kL * Sl + eps))**2 +
-            (dCp / (kC * Sc + eps))**2 +
-            (dHp / (kH * Sh + eps))**2 +
-            Rt * (dCp / (kC * Sc + eps)) * (dHp / (kH * Sh + eps)) + eps
+            (dLp / (kL * Sl + eps)) ** 2
+            + (dCp / (kC * Sc + eps)) ** 2
+            + (dHp / (kH * Sh + eps)) ** 2
+            + Rt * (dCp / (kC * Sc + eps)) * (dHp / (kH * Sh + eps))
+            + eps
         )
         return dE
 
@@ -472,6 +519,7 @@ def deltaE2000_metric(
     dE_map = dE_map.unsqueeze(1)  # [B,1,H,W]
     per_image = _masked_reduce_per_image(dE_map, m)
     return per_image.mean() if reduction == "mean" else per_image
+
 
 # =========================
 # 8) No-Reference IQA: BRISQUE / NIQE / PIQE
@@ -492,18 +540,25 @@ def brisque_metric(
     try:
         import piq  # type: ignore
     except Exception as e:
-        raise ImportError("piq is required for brisque_metric. Install via `pip install piq`.") from e
+        raise ImportError(
+            "piq is required for brisque_metric. Install via `pip install piq`."
+        ) from e
 
     if mask is not None:
         if reference_image_for_outside is None:
-            raise ValueError("When using a mask with BRISQUE, provide reference_image_for_outside (e.g., input_image).")
-        ref01 = _to_01(_to_float_tensor(reference_image_for_outside, device=x01.device), data_range)
+            raise ValueError(
+                "When using a mask with BRISQUE, provide reference_image_for_outside (e.g., input_image)."
+            )
+        ref01 = _to_01(
+            _to_float_tensor(reference_image_for_outside, device=x01.device), data_range
+        )
         m = _prepare_mask(x01, mask)
         x01 = _composite_inside_mask(x01, ref01, m)
 
     with torch.no_grad():
-        score = piq.brisque(x01, data_range=1.0, reduction='none')  # [B]
+        score = piq.brisque(x01, data_range=1.0, reduction="none")  # [B]
     return score.mean() if reduction == "mean" else score
+
 
 def niqe_metric(
     pred_image: torch.Tensor,
@@ -520,32 +575,41 @@ def niqe_metric(
     # Optional composite to localize score inside mask
     if mask is not None:
         if reference_image_for_outside is None:
-            raise ValueError("When using a mask with NIQE, provide reference_image_for_outside (e.g., input_image).")
-        ref01 = _to_01(_to_float_tensor(reference_image_for_outside, device=x01.device), data_range)
+            raise ValueError(
+                "When using a mask with NIQE, provide reference_image_for_outside (e.g., input_image)."
+            )
+        ref01 = _to_01(
+            _to_float_tensor(reference_image_for_outside, device=x01.device), data_range
+        )
         m = _prepare_mask(x01, mask)
         x01 = _composite_inside_mask(x01, ref01, m)
 
     # Try PIQ backends first (function or module class), then fall back to scikit-image
     try:
         import piq  # type: ignore
+
         with torch.no_grad():
             if hasattr(piq, "niqe") and callable(getattr(piq, "niqe")):
-                score = piq.niqe(x01, reduction='none')  # [B]
+                score = piq.niqe(x01, reduction="none")  # [B]
             else:
                 # Try submodule function
                 try:
                     from piq.niqe import niqe as piq_niqe_fn  # type: ignore
-                    score = piq_niqe_fn(x01, reduction='none')
+
+                    score = piq_niqe_fn(x01, reduction="none")
                 except Exception:
                     # Try class API (module or submodule)
                     if hasattr(piq, "NIQE"):
-                        score = piq.NIQE(reduction='none', data_range=1.0)(x01)
+                        score = piq.NIQE(reduction="none", data_range=1.0)(x01)
                     else:
                         try:
                             from piq.niqe import NIQE as PIQ_NIQE  # type: ignore
-                            score = PIQ_NIQE(reduction='none', data_range=1.0)(x01)
+
+                            score = PIQ_NIQE(reduction="none", data_range=1.0)(x01)
                         except Exception:
-                            raise AttributeError("PIQ does not provide NIQE in this version")
+                            raise AttributeError(
+                                "PIQ does not provide NIQE in this version"
+                            )
         return score.mean() if reduction == "mean" else score
     except Exception:
         pass
@@ -554,10 +618,13 @@ def niqe_metric(
     # 1) Try scikit-image NIQE if available
     try:
         from skimage.metrics import niqe as skimage_niqe  # type: ignore
+
         device = x01.device
         B, C, H, W = x01.shape
         if C == 3:
-            w = torch.tensor([0.2989, 0.5870, 0.1140], device=device, dtype=x01.dtype).view(1, 3, 1, 1)
+            w = torch.tensor(
+                [0.2989, 0.5870, 0.1140], device=device, dtype=x01.dtype
+            ).view(1, 3, 1, 1)
             gray = (x01 * w).sum(dim=1, keepdim=False)  # [B,H,W]
         else:
             gray = x01[:, 0]
@@ -572,18 +639,29 @@ def niqe_metric(
     device = x01.device
     B, C, H, W = x01.shape
     if C == 3:
-        w = torch.tensor([0.2989, 0.5870, 0.1140], device=device, dtype=x01.dtype).view(1, 3, 1, 1)
+        w = torch.tensor([0.2989, 0.5870, 0.1140], device=device, dtype=x01.dtype).view(
+            1, 3, 1, 1
+        )
         gray = (x01 * w).sum(dim=1, keepdim=False)  # [B,H,W]
     else:
         gray = x01[:, 0]
     gray = gray.unsqueeze(1)  # [B,1,H,W]
-    kx = torch.tensor([[1., 0., -1.], [2., 0., -2.], [1., 0., -1.]], device=device, dtype=gray.dtype).view(1,1,3,3)
-    ky = torch.tensor([[1., 2., 1.], [0., 0., 0.], [-1., -2., -1.]], device=device, dtype=gray.dtype).view(1,1,3,3)
+    kx = torch.tensor(
+        [[1.0, 0.0, -1.0], [2.0, 0.0, -2.0], [1.0, 0.0, -1.0]],
+        device=device,
+        dtype=gray.dtype,
+    ).view(1, 1, 3, 3)
+    ky = torch.tensor(
+        [[1.0, 2.0, 1.0], [0.0, 0.0, 0.0], [-1.0, -2.0, -1.0]],
+        device=device,
+        dtype=gray.dtype,
+    ).view(1, 1, 3, 3)
     gx = F.conv2d(gray, kx, padding=1)
     gy = F.conv2d(gray, ky, padding=1)
     mag = torch.sqrt(gx * gx + gy * gy + 1e-12)  # [B,1,H,W]
     score = mag.flatten(1).mean(dim=1)  # [B]
     return score.mean() if reduction == "mean" else score
+
 
 def piqe_metric(
     pred_image: torch.Tensor,
@@ -599,21 +677,27 @@ def piqe_metric(
     x01 = _to_01(_to_float_tensor(pred_image), data_range)
     if mask is not None:
         if reference_image_for_outside is None:
-            raise ValueError("When using a mask with PIQE, provide reference_image_for_outside (e.g., input_image).")
-        ref01 = _to_01(_to_float_tensor(reference_image_for_outside, device=x01.device), data_range)
+            raise ValueError(
+                "When using a mask with PIQE, provide reference_image_for_outside (e.g., input_image)."
+            )
+        ref01 = _to_01(
+            _to_float_tensor(reference_image_for_outside, device=x01.device), data_range
+        )
         m = _prepare_mask(x01, mask)
         x01 = _composite_inside_mask(x01, ref01, m)
 
     # Try PIQ first (if available in this version)
     try:
         import piq  # type: ignore
+
         with torch.no_grad():
             if hasattr(piq, "piqe") and callable(getattr(piq, "piqe")):
-                score = piq.piqe(x01, reduction='none')  # [B]
+                score = piq.piqe(x01, reduction="none")  # [B]
             else:
                 # try submodule
                 from piq.functional import piqe as piq_piqe_fn  # type: ignore
-                score = piq_piqe_fn(x01, reduction='none')
+
+                score = piq_piqe_fn(x01, reduction="none")
         return score.mean() if reduction == "mean" else score
     except Exception:
         pass
@@ -622,18 +706,29 @@ def piqe_metric(
     device = x01.device
     B, C, H, W = x01.shape
     if C == 3:
-        w = torch.tensor([0.2989, 0.5870, 0.1140], device=device, dtype=x01.dtype).view(1, 3, 1, 1)
+        w = torch.tensor([0.2989, 0.5870, 0.1140], device=device, dtype=x01.dtype).view(
+            1, 3, 1, 1
+        )
         gray = (x01 * w).sum(dim=1, keepdim=False)  # [B,H,W]
     else:
         gray = x01[:, 0]
     gray = gray.unsqueeze(1)
-    kx = torch.tensor([[1., 0., -1.], [2., 0., -2.], [1., 0., -1.]], device=device, dtype=gray.dtype).view(1,1,3,3)
-    ky = torch.tensor([[1., 2., 1.], [0., 0., 0.], [-1., -2., -1.]], device=device, dtype=gray.dtype).view(1,1,3,3)
+    kx = torch.tensor(
+        [[1.0, 0.0, -1.0], [2.0, 0.0, -2.0], [1.0, 0.0, -1.0]],
+        device=device,
+        dtype=gray.dtype,
+    ).view(1, 1, 3, 3)
+    ky = torch.tensor(
+        [[1.0, 2.0, 1.0], [0.0, 0.0, 0.0], [-1.0, -2.0, -1.0]],
+        device=device,
+        dtype=gray.dtype,
+    ).view(1, 1, 3, 3)
     gx = F.conv2d(gray, kx, padding=1)
     gy = F.conv2d(gray, ky, padding=1)
     mag = torch.sqrt(gx * gx + gy * gy + 1e-12)
     score = mag.flatten(1).mean(dim=1)
     return score.mean() if reduction == "mean" else score
+
 
 # =========================
 # 9) Highlight-specific sanity metrics (no GT)
@@ -655,14 +750,19 @@ def luminance_suppression_ratio(
     m = _prepare_mask(x01, mask)
 
     # Luminance (Y) via Rec.709: Y = 0.2126 R + 0.7152 G + 0.0722 B
-    w = torch.tensor([0.2126, 0.7152, 0.0722], device=x01.device, dtype=x01.dtype).view(1,3,1,1)
+    w = torch.tensor([0.2126, 0.7152, 0.0722], device=x01.device, dtype=x01.dtype).view(
+        1, 3, 1, 1
+    )
     Yin = (x01 * w).sum(dim=1, keepdim=True)
     Yout = (y01 * w).sum(dim=1, keepdim=True)
 
     pre = _masked_reduce_per_image(Yin, m).clamp_min(1e-6)
     post = _masked_reduce_per_image(Yout, m)
     ratio = (pre - post) / pre  # fraction reduced
-    return ratio.mean() if reduction == "mean" else ratio  # higher is better (more suppression)
+    return (
+        ratio.mean() if reduction == "mean" else ratio
+    )  # higher is better (more suppression)
+
 
 def chroma_consistency_deltaE(
     pred_image: torch.Tensor,
@@ -692,54 +792,72 @@ def chroma_consistency_deltaE(
         sums = (t * m).flatten(2).sum(-1)  # [B,C]
         cnts = m.flatten(2).sum(-1).clamp_min(1e-6)  # [B,1]
         return sums / cnts  # [B,C]
+
     ring_mean_ch = _masked_channel_mean(r_lab, ring_m)  # [B,3]
     # Broadcast to map
     ring_lab_map = ring_mean_ch.unsqueeze(-1).unsqueeze(-1).expand_as(p_lab)
 
     # ΔE00 inside mask: pred vs ring_mean
     def _deltaE00_map(lab1, lab2):
-        L1, a1, b1 = lab1[:,0], lab1[:,1], lab1[:,2]
-        L2, a2, b2 = lab2[:,0], lab2[:,1], lab2[:,2]
+        L1, a1, b1 = lab1[:, 0], lab1[:, 1], lab1[:, 2]
+        L2, a2, b2 = lab2[:, 0], lab2[:, 1], lab2[:, 2]
         eps = 1e-12
         kL = kC = kH = 1.0
-        C1 = torch.sqrt(a1*a1 + b1*b1 + eps)
-        C2 = torch.sqrt(a2*a2 + b2*b2 + eps)
+        C1 = torch.sqrt(a1 * a1 + b1 * b1 + eps)
+        C2 = torch.sqrt(a2 * a2 + b2 * b2 + eps)
         Cm = 0.5 * (C1 + C2)
         G = 0.5 * (1 - torch.sqrt((Cm**7) / (Cm**7 + 25**7) + eps))
         a1p = (1 + G) * a1
         a2p = (1 + G) * a2
-        C1p = torch.sqrt(a1p*a1p + b1*b1 + eps)
-        C2p = torch.sqrt(a2p*a2p + b2*b2 + eps)
-        h1p = torch.atan2(b1, a1p) % (2*math.pi)
-        h2p = torch.atan2(b2, a2p) % (2*math.pi)
+        C1p = torch.sqrt(a1p * a1p + b1 * b1 + eps)
+        C2p = torch.sqrt(a2p * a2p + b2 * b2 + eps)
+        h1p = torch.atan2(b1, a1p) % (2 * math.pi)
+        h2p = torch.atan2(b2, a2p) % (2 * math.pi)
         dLp = L2 - L1
         dCp = C2p - C1p
         dhp = h2p - h1p
-        dhp = torch.where(dhp >  math.pi, dhp - 2*math.pi, dhp)
-        dhp = torch.where(dhp < -math.pi, dhp + 2*math.pi, dhp)
-        dHp = 2.0 * torch.sqrt(C1p*C2p + eps) * torch.sin(dhp/2.0)
+        dhp = torch.where(dhp > math.pi, dhp - 2 * math.pi, dhp)
+        dhp = torch.where(dhp < -math.pi, dhp + 2 * math.pi, dhp)
+        dHp = 2.0 * torch.sqrt(C1p * C2p + eps) * torch.sin(dhp / 2.0)
         Lpm = 0.5 * (L1 + L2)
         Cpm = 0.5 * (C1p + C2p)
         hp_sum = h1p + h2p
-        hpm = torch.where(torch.abs(h1p - h2p) > math.pi, (hp_sum + 2*math.pi) / 2.0 - math.pi, hp_sum / 2.0)
-        T = 1 - 0.17*torch.cos(hpm - math.radians(30)) + 0.24*torch.cos(2*hpm) + \
-                0.32*torch.cos(3*hpm + math.radians(6)) - 0.20*torch.cos(4*hpm - math.radians(63))
-        Sl = 1 + (0.015 * (Lpm - 50)**2) / torch.sqrt(20 + (Lpm - 50)**2 + 1e-12)
+        hpm = torch.where(
+            torch.abs(h1p - h2p) > math.pi,
+            (hp_sum + 2 * math.pi) / 2.0 - math.pi,
+            hp_sum / 2.0,
+        )
+        T = (
+            1
+            - 0.17 * torch.cos(hpm - math.radians(30))
+            + 0.24 * torch.cos(2 * hpm)
+            + 0.32 * torch.cos(3 * hpm + math.radians(6))
+            - 0.20 * torch.cos(4 * hpm - math.radians(63))
+        )
+        Sl = 1 + (0.015 * (Lpm - 50) ** 2) / torch.sqrt(20 + (Lpm - 50) ** 2 + 1e-12)
         Sc = 1 + 0.045 * Cpm
         Sh = 1 + 0.015 * Cpm * T
-        Rt = -2 * torch.sqrt((Cpm**7) / (Cpm**7 + 25**7) + 1e-12) * \
-             torch.sin(math.radians(60) * torch.exp(-((hpm - math.radians(275)) / math.radians(25))**2))
+        Rt = (
+            -2
+            * torch.sqrt((Cpm**7) / (Cpm**7 + 25**7) + 1e-12)
+            * torch.sin(
+                math.radians(60)
+                * torch.exp(-(((hpm - math.radians(275)) / math.radians(25)) ** 2))
+            )
+        )
         dE = torch.sqrt(
-            (dLp / (kL * Sl + 1e-12))**2 +
-            (dCp / (kC * Sc + 1e-12))**2 +
-            (dHp / (kH * Sh + 1e-12))**2 +
-            Rt * (dCp / (kC * Sc + 1e-12)) * (dHp / (kH * Sh + 1e-12)) + 1e-12
+            (dLp / (kL * Sl + 1e-12)) ** 2
+            + (dCp / (kC * Sc + 1e-12)) ** 2
+            + (dHp / (kH * Sh + 1e-12)) ** 2
+            + Rt * (dCp / (kC * Sc + 1e-12)) * (dHp / (kH * Sh + 1e-12))
+            + 1e-12
         )
         return dE.unsqueeze(1)  # [B,1,H,W]
 
     dE_map = _deltaE00_map(p_lab, ring_lab_map)
     per_image = _masked_reduce_per_image(dE_map, m)
     return per_image.mean() if reduction == "mean" else per_image
+
 
 # =========================
 # 10) Boundary seam score (GMSD on a thin band)
@@ -761,12 +879,15 @@ def boundary_gmsd(
     band_m = _ring_mask(m, ring=band)
     # Composite trick to localize metric to the band
     return gmsd_metric(
-        pred_image=_composite_inside_mask(_to_float_tensor(pred_image), _to_float_tensor(target_image), band_m),
+        pred_image=_composite_inside_mask(
+            _to_float_tensor(pred_image), _to_float_tensor(target_image), band_m
+        ),
         target_image=_to_float_tensor(target_image),
         mask=None,  # already localized by composite
         data_range=data_range,
         reduction=reduction,
     )
+
 
 # =========================
 # 11) Mask comparison (IoU / Dice / Precision / Recall)

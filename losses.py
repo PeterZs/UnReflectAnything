@@ -15,10 +15,8 @@ from loss_utils import (
     TokenInpaintLoss,
     DiffuseHighlightPenaltyLoss,
     reconstruct_image_from_components,
-    saturation_ring_blob_consistency,
     _total_variation,
 )
-from models_utils import pixel_mask_to_patch_mask
 
 
 class UnReflectLoss(nn.Module):
@@ -221,7 +219,13 @@ class UnReflectLoss(nn.Module):
         self.register_buffer("_ring_ky", ky)
 
     def forward(
-        self, prediction, ground_truth, pixel_supervision_mask, pixel_inpaint_mask, patch_supervision_mask, patch_inpaint_mask
+        self,
+        prediction,
+        ground_truth,
+        pixel_supervision_mask,
+        pixel_inpaint_mask,
+        patch_supervision_mask,
+        patch_inpaint_mask,
     ):
         """
         Compute composite loss for UnReflectAnything model.
@@ -266,7 +270,7 @@ class UnReflectLoss(nn.Module):
         for comp_name in available_components:
             pred_comp = prediction[comp_name]
             gt_comp = ground_truth[comp_name]
-            
+
             # Highlight prediciton is a custom loss. Also there is no masking here
             if comp_name.lower() == "highlight":
                 pred_h = pred_comp.clamp(0, 1)
@@ -276,7 +280,7 @@ class UnReflectLoss(nn.Module):
                 )  # <--- Mask = None
                 losses["HighlightRegression"] = hl_loss
                 continue
-            
+
             # Diffuse/specular: supervise RGB channels ONLY on pixel_supervision_mask
             pred_rgb = pred_comp[:, :3]
             gt_rgb = gt_comp[:, :3]
@@ -361,7 +365,7 @@ class UnReflectLoss(nn.Module):
         # ====================================================================
         # Token-space inpainting loss
         # ====================================================================
-        
+
         # Feature-space distillation on masked patches
         if self.weight_token_inpaint > 0:
             if "tokens_completed" not in prediction:
@@ -381,8 +385,10 @@ class UnReflectLoss(nn.Module):
             ]  # Desired tokens from ground truth diffuse
             # The token inpainting loss should be computed on the inpainted tokens that are also supervised
             patch_inpaint_supervision_mask = patch_supervision_mask * patch_inpaint_mask
-            
-            l_token = self.token_inpaint_loss(tokens_completed, tokens_teacher, patch_inpaint_supervision_mask)
+
+            l_token = self.token_inpaint_loss(
+                tokens_completed, tokens_teacher, patch_inpaint_supervision_mask
+            )
             # l_token = self.token_inpaint_loss(tokens_completed, tokens_teacher, patch_inpaint_mask)
             # l_token = self.token_inpaint_loss(tokens_completed, tokens_teacher, patch_inpaint_supervision_mask)
             losses["TokenInpaint"] = l_token

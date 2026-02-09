@@ -13,6 +13,7 @@ if TYPE_CHECKING:
 
 def _nn_module_base():
     import torch.nn as nn
+
     return nn.Module
 
 
@@ -44,13 +45,19 @@ def model(
         If pretrained=True: an ``UnReflectModel`` instance (nn.Module) that can
         be called with ``model(images)`` where images is [B, 3, H, W].
     """
-    from main import create_model_from_config, load_and_process_config
+    from utilities.config import create_model_from_config, load_and_process_config
 
     from unreflectanything._shared import DEFAULT_WEIGHTS_FILENAME, get_cache_dir
 
     if config_path is None:
-        config_path = get_cache_dir("weights").parent / "configs" / "pretrained_config.yaml"
-    if config_path is not None and hasattr(config_path, "is_dir") and getattr(config_path, "is_dir")():
+        config_path = (
+            get_cache_dir("weights").parent / "configs" / "pretrained_config.yaml"
+        )
+    if (
+        config_path is not None
+        and hasattr(config_path, "is_dir")
+        and getattr(config_path, "is_dir")()
+    ):
         config_path = Path(config_path) / "pretrained_config.yaml"
     model_config = load_and_process_config(str(config_path))
     if verbose:
@@ -66,7 +73,10 @@ def model(
                 f"Weights file not found at '{resolved_weights}'.\n"
                 "Please run 'unreflect download --weights' or unreflectanything.download('weights') first."
             )
-        if DEFAULT_WEIGHTS_FILENAME not in resolved_weights.name and "full_model_weights" not in resolved_weights.name:
+        if (
+            DEFAULT_WEIGHTS_FILENAME not in resolved_weights.name
+            and "full_model_weights" not in resolved_weights.name
+        ):
             raise ValueError(
                 f"Cannot find full model weights in '{resolved_weights}'.\n"
                 "Please run 'unreflect download --weights' or unreflectanything.download('weights') first."
@@ -101,7 +111,9 @@ class UnReflectModel(_nn_module_base()):
         verbose: bool = False,
     ):
         if not pretrained:
-            raise ValueError("UnReflectModel(pretrained=False) is not supported; use ura.model() to get the class.")
+            raise ValueError(
+                "UnReflectModel(pretrained=False) is not supported; use ura.model() to get the class."
+            )
         super().__init__()
         from inference import load_pretrained
         import os
@@ -114,16 +126,20 @@ class UnReflectModel(_nn_module_base()):
         if weights_path is None:
             resolved_weights = get_cache_dir("weights") / DEFAULT_WEIGHTS_FILENAME
         elif os.path.isdir(weights_path):
-            resolved_weights = Path(weights_path).expanduser().resolve() / DEFAULT_WEIGHTS_FILENAME
+            resolved_weights = (
+                Path(weights_path).expanduser().resolve() / DEFAULT_WEIGHTS_FILENAME
+            )
         else:
-            resolved_weights = Path(weights_path).expanduser().resolve() 
-            
+            resolved_weights = Path(weights_path).expanduser().resolve()
+
         if not resolved_weights.exists():
             raise FileNotFoundError(
                 f"Weights not found at {resolved_weights}. Run 'unreflect download --weights' first."
             )
 
-        default_config_path = get_cache_dir("weights").parent / "configs" / "pretrained_config.yaml"
+        default_config_path = (
+            get_cache_dir("weights").parent / "configs" / "pretrained_config.yaml"
+        )
         torch_device = __import__("torch").device(_resolve_device(device))
         inner = load_pretrained(
             weights_path=resolved_weights,
@@ -131,12 +147,18 @@ class UnReflectModel(_nn_module_base()):
             device=str(torch_device),
             strict=False,
             verbose=verbose,
-            default_config_path=default_config_path if default_config_path.exists() else None,
+            default_config_path=default_config_path
+            if default_config_path.exists()
+            else None,
         )
         self._model = inner
         self._device = torch_device
         cfg = self._model.dinov3.config
-        self.image_size = getattr(cfg, "image_size", cfg.get("image_size", 448) if hasattr(cfg, "get") else 448)
+        self.image_size = getattr(
+            cfg,
+            "image_size",
+            cfg.get("image_size", 448) if hasattr(cfg, "get") else 448,
+        )
 
     @property
     def device(self):
@@ -162,7 +184,9 @@ class UnReflectModel(_nn_module_base()):
         import torch
 
         if images.dim() != 4 or images.shape[1] != 3:
-            raise ValueError(f"images must be [B, 3, H, W], got shape {tuple(images.shape)}")
+            raise ValueError(
+                f"images must be [B, 3, H, W], got shape {tuple(images.shape)}"
+            )
         batch = {
             "rgb": images.to(device=self._device, dtype=torch.float32),
         }

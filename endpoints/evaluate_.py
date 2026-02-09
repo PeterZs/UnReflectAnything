@@ -35,6 +35,7 @@ def evaluate(
         Dictionary mapping metric names to their values.
     """
     from evaluate import evaluate_images
+
     return evaluate_images(
         output=output,
         reference=reference,

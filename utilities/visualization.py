@@ -146,7 +146,7 @@ def rgb(
     if t.shape[0] == 4:
         # Keep as RGBA - no conversion needed
         pass
-    
+
     # Handle high-dimensional tensors with PCA (>4 channels)
     elif t.shape[0] > 4:
         if pca is None:
@@ -228,17 +228,21 @@ def rgb(
         # For RGBA, normalize RGB channels but preserve alpha channel
         rgb_channels = t[:3]  # Shape: (3, H, W)
         alpha_channel = t[3:4]  # Shape: (1, H, W)
-        
+
         # Normalize RGB channels
-        rgb_normalized = (rgb_channels - rgb_channels.min()) / (rgb_channels.max() - rgb_channels.min() + 1e-8)
-        
+        rgb_normalized = (rgb_channels - rgb_channels.min()) / (
+            rgb_channels.max() - rgb_channels.min() + 1e-8
+        )
+
         # Keep alpha channel as is (assuming it's already in [0, 1] range)
         # If alpha is not in [0, 1], normalize it too
         if alpha_channel.max() > 1.0:
-            alpha_normalized = (alpha_channel - alpha_channel.min()) / (alpha_channel.max() - alpha_channel.min() + 1e-8)
+            alpha_normalized = (alpha_channel - alpha_channel.min()) / (
+                alpha_channel.max() - alpha_channel.min() + 1e-8
+            )
         else:
             alpha_normalized = alpha_channel
-            
+
         t = torch.cat([rgb_normalized, alpha_normalized], dim=0)
 
     # Apply border if specified
@@ -256,7 +260,7 @@ def rgb(
             # Tuple format - always apply
             should_apply_border = True
             color, thickness = border
-    
+
     if should_apply_border:
         thickness = int(thickness) + 1
         # Convert color to RGB tensor with values in [0, 1]
@@ -350,9 +354,8 @@ def rgb(
             raise ValueError(
                 "label must be a dict {position,height,margin,text} or a tuple (pos,height,text) or (pos,height,padding,text)"
             )
-    
-    if should_apply_label:
 
+    if should_apply_label:
         rect_height = max(1, int(rect_height))
         C, H, W = t.shape
         np_img = (t.permute(1, 2, 0).detach().cpu().numpy() * 255.0).astype(np.uint8)
@@ -466,7 +469,7 @@ def rgb(
         def draw_label_on_pil(pil_img: Image.Image, x0: int, y0: int) -> None:
             draw = ImageDraw.Draw(pil_img)
             # Rectangle
-            draw.rectangle([x0, y0, x0 + rect_w, y0 + rect_h], fill=(255,255,255))
+            draw.rectangle([x0, y0, x0 + rect_w, y0 + rect_h], fill=(255, 255, 255))
             # Text position: left padding, vertically centered
             text_x = x0 + pad
             text_y = y0 + (rect_h - text_h) // 2
@@ -556,17 +559,19 @@ def rgb(
             spacing = int(show_grid["spacing"])
             grid_width = show_grid.get("width", 1)
             grid_color = show_grid.get("color", [0.0, 0.0, 0.0])  # Default black
-    
+
     if should_apply_grid:
         # Convert tensor to numpy array for grid drawing
         # t shape: (C, H, W)
         C, H, W = t.shape
-        np_img_grid = (t.permute(1, 2, 0).detach().cpu().numpy() * 255.0).astype(np.uint8)
+        np_img_grid = (t.permute(1, 2, 0).detach().cpu().numpy() * 255.0).astype(
+            np.uint8
+        )
         np_img_grid = np.ascontiguousarray(np_img_grid)
-        
+
         # Determine if image has alpha channel
         has_alpha = C == 4
-        
+
         # Convert color to RGB tuple with values in [0, 255]
         if isinstance(grid_color, str):
             # Handle hex color
@@ -593,37 +598,41 @@ def rgb(
                 color_tuple = tuple(int(c) for c in color_tensor)
         else:
             raise ValueError(f"Unsupported grid color type: {type(grid_color)}")
-        
+
         # Ensure color tuple has 3 values
         if len(color_tuple) != 3:
-            raise ValueError(f"Grid color must have exactly 3 RGB values, got {len(color_tuple)}")
-        
+            raise ValueError(
+                f"Grid color must have exactly 3 RGB values, got {len(color_tuple)}"
+            )
+
         # Clamp color values to [0, 255]
         color_tuple = tuple(max(0, min(255, c)) for c in color_tuple)
-        
+
         # Convert to PIL Image for drawing
         if has_alpha:
-            pil_img_grid = Image.fromarray(np_img_grid, 'RGBA')
+            pil_img_grid = Image.fromarray(np_img_grid, "RGBA")
         else:
             pil_img_grid = Image.fromarray(np_img_grid)
         draw_grid = ImageDraw.Draw(pil_img_grid)
-        
+
         # Draw vertical grid lines
         x = spacing
         while x < W:
             draw_grid.line([(x, 0), (x, H - 1)], fill=color_tuple, width=grid_width)
             x += spacing
-        
+
         # Draw horizontal grid lines
         y = spacing
         while y < H:
             draw_grid.line([(0, y), (W - 1, y)], fill=color_tuple, width=grid_width)
             y += spacing
-        
+
         # Convert back to tensor
         np_img_grid = np.array(pil_img_grid)
         t = (
-            torch.from_numpy(np_img_grid).to(device=t.device, dtype=t.dtype).permute(2, 0, 1)
+            torch.from_numpy(np_img_grid)
+            .to(device=t.device, dtype=t.dtype)
+            .permute(2, 0, 1)
             / 255.0
         )
 
@@ -637,10 +646,10 @@ def rgb(
         # Tensor is in CxHxW format, convert to HxWxC for PIL
         t_pil = t.permute(1, 2, 0).cpu().numpy()  # Shape: (H, W, C)
         t_pil = (t_pil * 255).astype(np.uint8)
-        
+
         # Handle RGBA images
         if t_pil.shape[2] == 4:
-            return Image.fromarray(t_pil, 'RGBA')
+            return Image.fromarray(t_pil, "RGBA")
         else:
             return Image.fromarray(t_pil)
     else:
@@ -778,9 +787,9 @@ def viewPixelMatches(
     score_max = scores.max()
     if score_min == score_max:
         # If all scores are equal, set them all to 1.0 to indicate maximum confidence
-        norm_scores = torch.ones_like(scores)
+        torch.ones_like(scores)
     else:
-        norm_scores = (scores - score_min) / (score_max - score_min)
+        (scores - score_min) / (score_max - score_min)
 
     # Extract and draw patches
     for i, ((x1, y1), (x2, y2), score) in enumerate(zip(pts1, pts2, scores)):
@@ -871,7 +880,7 @@ def viewComparePixelMatches(
     patch_size = int(
         min(w1, h1, w2, h2) * 2 / topk
     )  # Reasonable default relative to image size
-    half_patch = patch_size // 2
+    patch_size // 2
 
     # Create canvas with space for patches and annotations
     canvas_height = max(h1, h2)  # Additional space for circles
@@ -886,9 +895,9 @@ def viewComparePixelMatches(
     score_min = scores_selected.min()
     score_max = scores_selected.max()
     if score_min == score_max:
-        norm_scores = torch.ones_like(scores_selected)
+        torch.ones_like(scores_selected)
     else:
-        norm_scores = (scores_selected - score_min) / (score_max - score_min)
+        (scores_selected - score_min) / (score_max - score_min)
 
     # Function to generate a random color
     def get_random_color():
@@ -1190,7 +1199,7 @@ def viewEpipolarGeometry(
 
         # Arrow head parameters
         head_length = scale * 0.3
-        head_width = scale * 0.2
+        scale * 0.2
 
         # Calculate arrow head points
         angle = math.atan2(dy, dx)
@@ -1657,7 +1666,7 @@ def viewTriplets(
     # Create a new canvas area below to display close-ups of selected triplets
     display_patch_size = int(patch_size * 8)  # enlarge patches for close-up display
     num_selected = len(selected_indices)
-    closeup_width = num_selected * display_patch_size
+    num_selected * display_patch_size
     closeup_height = 3 * display_patch_size  # three rows: positive, anchor, negative
 
     total_canvas_height = canvas_height + closeup_height
@@ -1713,7 +1722,7 @@ def viewTriplets(
         new_canvas.paste(neg_patch, (x_offset, neg_y_offset))
 
         # Optionally, draw rectangles around the pasted patches for clarity
-        half_disp = display_patch_size // 2
+        display_patch_size // 2
         closeup_draw.rectangle(
             [
                 x_offset,
@@ -1792,7 +1801,7 @@ def viewCameraMotion(
 
         # Arrow head parameters
         head_length = scale * 0.3
-        head_width = scale * 0.2
+        scale * 0.2
 
         # Calculate arrow head points
         angle = math.atan2(dy, dx)
@@ -2968,7 +2977,7 @@ def bundle_to_rerun(
         )
 
         # Draw lines from source points to camera center (origin)
-        camera_center = np.zeros(3)  # Camera 1 is at origin
+        np.zeros(3)  # Camera 1 is at origin
         # Draw lines from source points to camera2 center
         camera2_center = t  # Camera 2 center is at translation vector t
         rr.log(
@@ -3038,7 +3047,7 @@ def mark_img(
         return image
 
     # Store original type for later conversion
-    original_type: type = type(image)
+    type(image)
     is_tensor: bool = isinstance(image, torch.Tensor)
     is_pil: bool = hasattr(image, "mode")  # Check if PIL Image
     original_shape: Optional[Tuple[int, ...]] = None
@@ -3163,7 +3172,7 @@ def highlights_rerun_show(
     Visualize highlight and geometry info with rerun, including highlight 3D points.
 
     Args:
-        highlight_result (dict): Outputs from PolarHighlighter.
+        highlight_result (dict): Outputs from HighlightRender.
         batch (dict): Associated batch. Uses batch["diffuse"] for colors.
         resolution (tuple): Output resolution (height, width) for camera.
         width (int): Width of rerun viewer.
@@ -3186,9 +3195,9 @@ def highlights_rerun_show(
         ),
     )
     # Light position and color (white)
-    light_camera_rf = highlight_result["light_pos"][0] * torch.tensor(
-        [-1, -1, 1]
-    ).to(highlight_result["light_pos"].device)
+    light_camera_rf = highlight_result["light_pos"][0] * torch.tensor([-1, -1, 1]).to(
+        highlight_result["light_pos"].device
+    )
     rr.log(
         "/light",
         rr.Points3D(

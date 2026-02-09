@@ -29,7 +29,7 @@ def asymptote(y_data):
 def improvement(y_data):
     # Fit the data to the exponential function
     y_data = np.array(y_data)
-    x_data = np.arange(len(y_data))
+    np.arange(len(y_data))
 
     # Calculate the improvement
     first_value = y_data[0]

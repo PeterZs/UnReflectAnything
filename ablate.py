@@ -10,7 +10,9 @@ def _load_train_config(config_path: str):
         cfg = yaml.safe_load(f)
     params = cfg.get("parameters", {})
     # flatten to a dict of default values
-    flat = {k: (v.get("value") if isinstance(v, dict) else v) for k, v in params.items()}
+    flat = {
+        k: (v.get("value") if isinstance(v, dict) else v) for k, v in params.items()
+    }
     return flat
 
 
@@ -45,8 +47,16 @@ def _build_sweep_from_train(train_cfg: dict, sweep_name: str | None = None) -> d
 
 def main():
     parser = argparse.ArgumentParser(description="Launch a 2-run ablation sweep")
-    parser.add_argument("--name", "-n", type=str, default=None, help="Name for the W&B sweep")
-    parser.add_argument("--config", "-c", type=str, default=os.environ.get("ABLATE_CONFIG", "config_train.yaml"), help="Path to base train config")
+    parser.add_argument(
+        "--name", "-n", type=str, default=None, help="Name for the W&B sweep"
+    )
+    parser.add_argument(
+        "--config",
+        "-c",
+        type=str,
+        default=os.environ.get("ABLATE_CONFIG", "config_train.yaml"),
+        help="Path to base train config",
+    )
     args, unknown = parser.parse_known_args()
 
     # Load base config
@@ -66,6 +76,7 @@ def main():
                     v = value.lower() in ("true", "1", "yes")
                 elif isinstance(orig, (list, tuple, dict)):
                     import ast as _ast
+
                     v = _ast.literal_eval(value)
                 elif isinstance(orig, int):
                     v = int(value)
@@ -77,7 +88,9 @@ def main():
                 v = value
             train_cfg[key] = v
 
-    sweep_cfg, entity, project = _build_sweep_from_train(train_cfg, sweep_name=args.name)
+    sweep_cfg, entity, project = _build_sweep_from_train(
+        train_cfg, sweep_name=args.name
+    )
 
     # Create sweep and launch exactly two runs (max is 2 because grid of [True, False])
     sweep_id = wandb.sweep(sweep=sweep_cfg, entity=entity, project=project)
@@ -96,5 +109,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-

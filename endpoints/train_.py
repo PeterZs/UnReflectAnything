@@ -55,6 +55,7 @@ def train(
     try:
         sys.argv = new_argv
         import main
+
         main.run_pipeline(mode="train")
     finally:
         sys.argv = argv_backup

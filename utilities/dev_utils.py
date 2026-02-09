@@ -255,20 +255,17 @@ def embedding2color(
         # Reshape: B, C, H, W -> B, H, W, C -> (B*H*W), C
         embeddings_reshaped = embedding_map.permute(0, 2, 3, 1)  # B, H, W, C
         embeddings_2d = embeddings_reshaped.reshape(-1, C).cpu().numpy()
-        output_shape = (B, 3, H, W)
 
     elif ndim == 5:  # BxCxHxWxL (feature volume)
         B, C, H, W, L = original_shape
         # Reshape: B, C, H, W, L -> B, H, W, L, C -> (B*H*W*L), C
         embeddings_reshaped = embedding_map.permute(0, 2, 3, 4, 1)  # B, H, W, L, C
         embeddings_2d = embeddings_reshaped.reshape(-1, C).cpu().numpy()
-        output_shape = (B, 3, H, W, L)
 
     elif ndim == 3:  # BxSxC (transformer output)
         B, S, C = original_shape
         # Reshape: B, S, C -> (B*S), C
         embeddings_2d = embedding_map.reshape(-1, C).cpu().numpy()
-        output_shape = (B, S, 3)
 
     else:
         raise ValueError(

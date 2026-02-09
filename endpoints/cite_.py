@@ -52,7 +52,9 @@ def cite(format: Literal["bibtex", "apa", "mla", "ieee", "plain"] = "bibtex") ->
             if citations_path.exists():
                 citations_text = citations_path.read_text(encoding="utf-8")
             else:
-                citations_path = Path(__file__).parent.parent / "assets" / "citations.txt"
+                citations_path = (
+                    Path(__file__).parent.parent / "assets" / "citations.txt"
+                )
                 if citations_path.exists():
                     citations_text = citations_path.read_text(encoding="utf-8")
                 else:

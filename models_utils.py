@@ -3,9 +3,10 @@ import torch.nn as nn
 import os
 from typing import Optional
 import torch.nn.functional as F
+from pathlib import Path
+from typing import Optional, Union, Any
 
-
-class DictInputAdapter(nn.Module):
+class DataParallelWrapper(nn.Module):
     """
     Adapter so a model that expects forward(model_input_dict) can be wrapped with
     nn.DataParallel, which scatters tensor arguments (not dicts). The Engine
@@ -17,7 +18,13 @@ class DictInputAdapter(nn.Module):
         super().__init__()
         self.module = module
 
-    def forward(self, rgb, inpaint_mask_override=None, inpaint_mask_dilation=None, just_extract_tokens=False):
+    def forward(
+        self,
+        rgb,
+        inpaint_mask_override=None,
+        inpaint_mask_dilation=None,
+        just_extract_tokens=False,
+    ):
         model_input_dict = {
             "rgb": rgb,
             "inpaint_mask_override": inpaint_mask_override,
@@ -30,9 +37,29 @@ class DictInputAdapter(nn.Module):
             try:
                 return self._modules["module"]
             except KeyError:
-                raise AttributeError("'DictInputAdapter' object has no attribute 'module'") from None
+                raise AttributeError(
+                    "'DataParallelWrapper' object has no attribute 'module'"
+                ) from None
         return getattr(self.module, name)
 
+def _is_instance_or_cfg(x, cls):
+    """Return 'instance' if x is an instance of cls, 'cfg' if dict, else raise."""
+    if isinstance(x, cls):
+        return "instance"
+    if isinstance(x, dict):
+        return "cfg"
+    raise TypeError(f"Expected {cls.__name__} instance or dict config, got {type(x)}.")
+
+
+def _build(component, cls):
+    """
+    Build a component given either an instance of `cls` or a config dict
+    with kwargs for cls(**config_dict).
+    """
+    kind = _is_instance_or_cfg(component, cls)
+    if kind == "instance":
+        return component
+    return cls(component)  # Pass dict as single argument for config-based constructors
 
 def get_model_parameter_summary(model):
     """
@@ -330,7 +357,7 @@ def load_best_model_by_run(
 
     # Build model using the main factory to ensure identical architecture
     try:
-        from main import (
+        from utilities.config import (
             create_model_from_config,
         )  # local import to avoid top-level cycle
 
@@ -351,7 +378,9 @@ def load_best_model_by_run(
         if len(missing) > 0:
             print(f"Warning: Missing keys when loading checkpoint: {len(missing)} keys")
         if len(unexpected) > 0:
-            print(f"Warning: Unexpected keys when loading checkpoint: {len(unexpected)} keys")
+            print(
+                f"Warning: Unexpected keys when loading checkpoint: {len(unexpected)} keys"
+            )
     if len(unexpected) > 0:
         # Not fatal; but surface to caller as warning via exception message for clarity
         # Users can inspect and decide to ignore
@@ -364,18 +393,22 @@ def load_best_model_by_run(
 
 
 def pixel_mask_to_patch_mask(
-    mask_hw: torch.Tensor, patch_size: int, threshold: float = 0.0, invert: bool = False, soft: bool = False
+    mask_hw: torch.Tensor,
+    patch_size: int,
+    threshold: float = 0.0,
+    invert: bool = False,
+    soft: bool = False,
 ) -> torch.Tensor:
     """
     Convert pixel mask to patch mask.
-    
+
     Args:
         mask_hw: (B, 1, H, W) in [0,1]
         patch_size: int, spatial size of each patch
         threshold: float, threshold for determining masked pixels
         invert: bool, if True, invert the mask
         soft: bool, if True, output soft values in [0,1] representing proportion of pixels above threshold
-        
+
     Returns:
         patch_mask: (B, N) where N=(H/P)*(W/P)
             - If soft=False: boolean tensor (patch is masked if ANY pixel is above threshold)
@@ -400,13 +433,14 @@ def pixel_mask_to_patch_mask(
             pm = torch.logical_not(pm)
     return pm
 
+
 def feather_token_mask(pm_soft: torch.Tensor, radius_tokens: int = 1, smoothstep=True):
     """
     pm_soft: (B, N) in [0,1], 1 = needs inpainting
     returns: (B, N) in [0,1], softly feathered over the token grid
     """
     B, N = pm_soft.shape
-    H = int(round(N ** 0.5))
+    H = int(round(N**0.5))
     assert H * H == N, "N must be a perfect square (flattened token grid)."
     m = pm_soft.view(B, 1, H, H)
 
@@ -417,7 +451,7 @@ def feather_token_mask(pm_soft: torch.Tensor, radius_tokens: int = 1, smoothstep
     # then recombine to keep values near edges smooth but not overly washed.
     kernel = torch.ones(1, 1, k, k, device=m.device, dtype=m.dtype) / (k * k)
 
-    m_blur  = F.conv2d(m, kernel, padding=pad)
+    m_blur = F.conv2d(m, kernel, padding=pad)
     inv_blur = F.conv2d(1.0 - m, kernel, padding=pad)
     # Re-normalize: high where hole dominates, low where visible dominates
     out = m_blur / (m_blur + inv_blur + 1e-6)
@@ -438,7 +472,7 @@ def patch_mask_to_pixel_mask(
     Args:
         patch_mask: (B, N) boolean or float tensor, where N = (H/P)*(W/P)
         patch_size: int, spatial size of each patch
-        soft: bool, if True, use bilinear interpolation for smooth transitions; 
+        soft: bool, if True, use bilinear interpolation for smooth transitions;
               if False, use nearest neighbor interpolation
 
     Returns:
@@ -446,7 +480,7 @@ def patch_mask_to_pixel_mask(
     """
     B, N = patch_mask.shape
     # Compute target H and W (assuming square arrangement, filled in row-major order)
-    patch_grid_size = int(N ** 0.5)
+    patch_grid_size = int(N**0.5)
 
     # Reshape (B, N) -> (B, 1, grid, grid)
     patch_mask_grid = patch_mask.reshape(B, 1, patch_grid_size, patch_grid_size).float()
@@ -457,13 +491,87 @@ def patch_mask_to_pixel_mask(
             patch_mask_grid,
             scale_factor=patch_size,
             mode="bilinear",
-            align_corners=False
+            align_corners=False,
         )
     else:
         # Use nearest-neighbor interpolation
         pixel_mask = torch.nn.functional.interpolate(
-            patch_mask_grid,
-            scale_factor=patch_size,
-            mode="nearest"
+            patch_mask_grid, scale_factor=patch_size, mode="nearest"
         )
     return pixel_mask
+
+def load_pretrained(
+    weights_path: Path,
+    config_path: Optional[Union[Path, str, dict, Any]] = None,
+    device: str = "cuda",
+    strict: bool = False,
+    verbose: bool = False,
+    model_module: Optional[str] = None,
+) -> "torch.nn.Module":
+    """Build the model architecture and load checkpoint weights (single entry point for inference).
+
+    Resolves configuration in order: checkpoint, run directory (if run/runs_dir set),
+    config argument (path or dict), default_config_path. Then builds the model with
+    create_model_from_config, loads state_dict, and returns the model in eval mode.
+
+    Args:
+        weights_path: Path to the checkpoint file (e.g. full_model_weights.pt).
+        config: Optional config source: path to YAML or dict. Used if checkpoint has no config.
+        device: Device string (e.g. "cuda", "cpu").
+        strict: If True, load_state_dict uses strict=True.
+        verbose: If True, print progress information.
+        default_config_path: Optional path to default config when no other source is available.
+        run: Optional run identifier for loading config from experiment directory.
+        runs_dir: Optional base directory for runs (used with run).
+        model_module: Optional override for config.MODEL.MODEL_MODULE.
+
+    Returns:
+        Loaded model in eval mode (e.g. UnReflect_Model_TokenInpainter).
+    """
+    import torch
+    from utilities.config import create_model_from_config, load_config_from_checkpoint, load_config_from_path_or_dict
+    from dotmap import DotMap
+
+    weights_path = Path(weights_path).expanduser().resolve()
+    if not weights_path.exists():
+        raise FileNotFoundError(f"Weights not found at {weights_path}")
+
+    if verbose:
+        print(f"Loading checkpoint from '{weights_path}' on device '{device}'")
+    checkpoint = torch.load(weights_path, map_location="cpu", weights_only=False)
+
+    if config_path is None:
+        config = load_config_from_checkpoint(checkpoint)
+    elif isinstance(config_path, (DotMap, dict)):
+        config = load_config_from_path_or_dict(config_path)
+    else:
+        path = Path(config_path).expanduser().resolve()
+        if path.exists():
+            config = load_config_from_path_or_dict(path)
+        else:
+            config = load_config_from_checkpoint(checkpoint)
+
+    #   )
+    if config_path is not None and verbose:
+        print(f"Model configuration loaded from {config_path}")
+
+    if model_module is not None:
+        config.MODEL.MODEL_MODULE = model_module
+    config.USE_TORCH_COMPILE = False
+
+    torch_device = torch.device(device)
+    model = create_model_from_config(config, torch_device, verbose=verbose)
+    state_dict = checkpoint.get("model_state_dict")
+    if state_dict is None:
+        raise KeyError("Checkpoint does not contain model_state_dict")
+    missing, unexpected = model.load_state_dict(state_dict, strict=strict)
+    if not strict:
+        if missing:
+            print(f"Warning: missing keys when loading checkpoint: {missing}")
+        if unexpected:
+            print(f"Warning: unexpected keys when loading checkpoint: {unexpected}")
+
+    model.eval()
+    if verbose:
+        print("✔️  Model loaded and ready for inference")
+    return model

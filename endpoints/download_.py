@@ -73,7 +73,9 @@ def download(
         download_configs(output_dir=configs_dir, force=force)
         return configs_dir
     else:  # "all"
-        download_weights(output_dir=output_path / "weights", variant=variant, force=force)
+        download_weights(
+            output_dir=output_path / "weights", variant=variant, force=force
+        )
         download_images(output_dir=output_path / "images", force=force)
         download_notebooks(output_dir=output_path / "notebooks", force=force)
         download_configs(output_dir=output_path / "configs", force=force)

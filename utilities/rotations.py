@@ -303,7 +303,7 @@ def mat2euler(mat: torch.Tensor) -> torch.Tensor:
         rotation_mat[..., 1, 1],
         rotation_mat[..., 1, 2],
     )
-    r31, r32, r33 = (
+    _r31, _r32, r33 = (
         rotation_mat[..., 2, 0],
         rotation_mat[..., 2, 1],
         rotation_mat[..., 2, 2],
@@ -394,7 +394,6 @@ def mat2axang(mat: torch.Tensor) -> tuple:
         # Using the rotation vector itself maintains any numerical tendencies
         # in the original matrix while avoiding division by near-zero
         rotation_axis = np.array([1.0, 0.0, 0.0])  # Could also use np.zeros(3)
-        rotation_angke = 0.0
     else:
         # Normal case: normalize the rotation vector to get the axis
         rotation_axis = rotvec / rotation_angle

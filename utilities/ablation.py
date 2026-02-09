@@ -32,5 +32,3 @@ class Ablation(AbstractContextManager):
 
     def set(self, enabled: bool):
         self.enabled = bool(enabled)
-
-

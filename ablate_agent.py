@@ -16,7 +16,11 @@ def ablate_agent():
         # Prefix the auto-generated run name: baseline_... or <RUN_DISPLAY_NAME>_...
         is_ablate = bool(config_dict.get("ABLATE", False))
         auto_name = (wandb.run.name or "").strip()
-        prefix = (config_dict.get("RUN_DISPLAY_NAME") or "ablation") if is_ablate else "baseline"
+        prefix = (
+            (config_dict.get("RUN_DISPLAY_NAME") or "ablation")
+            if is_ablate
+            else "baseline"
+        )
         prefix = str(prefix).strip().replace(" ", "_")
         try:
             if auto_name and not auto_name.startswith(prefix + "_"):
@@ -30,5 +34,3 @@ def ablate_agent():
 
 if __name__ == "__main__":
     ablate_agent()
-
-

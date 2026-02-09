@@ -1005,7 +1005,7 @@ import torch
 import torch.nn as nn
 
 
-class HighLightRenderer(nn.Module):
+class HighlightRenderer(nn.Module):
     """
     Renders reflection artifacts on images based on light sources and surface geometry.
     Simulates specular reflections using the law of reflection and Phong lighting model.
@@ -1416,8 +1416,7 @@ class HighLightRenderer(nn.Module):
             sampled_colors: Colors at sample points [B, 3, num_samples]
         """
         B, _, H_img, W_img = projected_image.shape
-        num_samples = local_x.shape[0]
-        device = projected_image.device
+        local_x.shape[0]
 
         # Convert local coordinates to UV coordinates [0, 1]
         # local_x spans [-light_width/2, light_width/2] -> map to [0, 1]
@@ -1431,8 +1430,8 @@ class HighLightRenderer(nn.Module):
 
         # Convert UV to image pixel coordinates
         # Note: We flip V coordinate because image (0,0) is top-left but light plane (0,0) is center
-        u_img = u * (W_img - 1)  # [num_samples]
-        v_img = (1.0 - v) * (H_img - 1)  # [num_samples] - flip V axis
+        u * (W_img - 1)  # [num_samples]
+        (1.0 - v) * (H_img - 1)  # [num_samples] - flip V axis
 
         # Create grid for F.grid_sample (expects [-1, 1] range)
         grid_x = 2.0 * u - 1.0  # Convert [0, 1] -> [-1, 1]
@@ -2110,7 +2109,7 @@ class ReflectionWarp(nn.Module):
         self.width = width
         self.patch_size = patch_size
         self.backproject = BackProject(height, width, patch_size)
-        self.highlight_renderer = HighLightRenderer(height, width, patch_size)
+        self.highlight_renderer = HighlightRenderer(height, width, patch_size)
 
     def forward_point_light(
         self,

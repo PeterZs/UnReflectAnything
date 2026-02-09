@@ -26,7 +26,9 @@ def _verify_weights_impl(
     if not resolved.exists():
         print(f"Weights file not found: {resolved}")
         return False
-    print(f"Found weights file: {resolved}\nLoading weights and verifying key alignemnts...")
+    print(
+        f"Found weights file: {resolved}\nLoading weights and verifying key alignemnts..."
+    )
 
     options = InferenceOptions(
         weights_path=resolved,
@@ -58,7 +60,7 @@ def _verify_dataset_impl(
     from dataset import (
         HOUSECAT6D_Dataset,
         POLARGB_Dataset,
-        RGBP_Dataset,
+        UnReflectAnything_Dataset,
         SCRREAM_Dataset,
     )
 
@@ -66,7 +68,7 @@ def _verify_dataset_impl(
         "SCRREAM": SCRREAM_Dataset,
         "HOUSECAT6D": HOUSECAT6D_Dataset,
         "POLARGB": POLARGB_Dataset,
-        "RGBP": RGBP_Dataset,
+        "RGBP": UnReflectAnything_Dataset,
     }
 
     if dataset_type is None:

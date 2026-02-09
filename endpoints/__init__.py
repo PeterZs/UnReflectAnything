@@ -54,56 +54,73 @@ def __getattr__(name: str):
     # New API functions (one module per subcommand)
     if name == "inference":
         from unreflectanything.inference_ import inference
+
         return inference
     if name == "model":
         from unreflectanything.model_ import model
+
         return model
     if name == "UnReflectModel":
         from unreflectanything.model_ import UnReflectModel
+
         return UnReflectModel
     if name == "train":
         from unreflectanything.train_ import train
+
         return train
     if name == "test":
         from unreflectanything.test_ import test
+
         return test
     if name == "download":
         from unreflectanything.download_ import download
+
         return download
     if name == "evaluate":
         from unreflectanything.evaluate_ import evaluate
+
         return evaluate
     if name == "verify":
         from unreflectanything.verify_ import verify
+
         return verify
     if name == "verify_dataset":
         from unreflectanything.verify_ import verify_dataset
+
         return verify_dataset
     if name == "cite":
         from unreflectanything.cite_ import cite
+
         return cite
 
     # Legacy API
     if name == "run_pipeline":
         import main as _main
+
         return _main.run_pipeline
     if name == "InferenceOptions":
         from inference import InferenceOptions
+
         return InferenceOptions
     if name == "compute_highlight_mask":
         from inference import compute_highlight_mask
+
         return compute_highlight_mask
     if name == "run_inference":
         from inference import run_inference
+
         return run_inference
     if name == "get_cache_dir":
         from unreflectanything._shared import get_cache_dir
+
         return get_cache_dir
     if name == "ImageDirDataset":
         from unreflectanything.dataset_ import ImageDirDataset
+
         return ImageDirDataset
     if name == "DEFAULT_IMAGE_EXTENSIONS":
         from unreflectanything._shared import DEFAULT_IMAGE_EXTENSIONS
+
         return DEFAULT_IMAGE_EXTENSIONS
 
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

@@ -3,7 +3,6 @@ import os
 import shutil
 from contextlib import contextmanager, nullcontext
 from typing import Optional, Union
-import random
 
 import numpy as np
 import pandas as pd
@@ -17,7 +16,7 @@ import utilities.system_ops as system_ops
 import wandb
 from logger import get_logger
 from losses import UnReflectLoss
-from polar_highlighter import PolarHighlighter, get_soft_highlight_map
+from highlight_render import HighlightRender
 import torchvision.transforms as transforms
 from utilities.visualization import panelize, rgb
 from utilities.ablation import Ablation
@@ -125,7 +124,7 @@ class Engine:
             else:
                 # Temporary placeholder; will be updated upon resume
                 self.config["name"] = "resuming"
-        self.add_highlights = PolarHighlighter(height=self.height, width=self.width).to(
+        self.add_highlights = HighlightRender(height=self.height, width=self.width).to(
             self.device
         )
 
@@ -190,9 +189,15 @@ class Engine:
             ),
             diffuse_hl_threshold=float(self.config.get("DIFFUSE_HL_THRESHOLD", 0.7)),
             diffuse_hl_use_charb=bool(self.config.get("DIFFUSE_HL_USE_CHARB", True)),
-            diffuse_hl_penalty_mode=self.config.get("DIFFUSE_HL_PENALTY_MODE", "brightness"),
-            diffuse_hl_target_brightness=self.config.get("DIFFUSE_HL_TARGET_BRIGHTNESS", None),
-            diffuse_hl_use_luminance=bool(self.config.get("DIFFUSE_HL_USE_LUMINANCE", False)),
+            diffuse_hl_penalty_mode=self.config.get(
+                "DIFFUSE_HL_PENALTY_MODE", "brightness"
+            ),
+            diffuse_hl_target_brightness=self.config.get(
+                "DIFFUSE_HL_TARGET_BRIGHTNESS", None
+            ),
+            diffuse_hl_use_luminance=bool(
+                self.config.get("DIFFUSE_HL_USE_LUMINANCE", False)
+            ),
         ).to(self.device)
 
         # Memory management settings for optimal GPU memory usage
@@ -790,8 +795,11 @@ class Engine:
                 #     sample["diffuse"].to(self.device, non_blocking=True)
                 # )
                 # Token inpainter ground truth
-                diffuse_teacher_tokens = self.model(sample["diffuse"].to(self.device, non_blocking=True), just_extract_tokens=True)
-                
+                diffuse_teacher_tokens = self.model(
+                    rgb=sample["diffuse"].to(self.device, non_blocking=True),
+                    just_extract_tokens=True,
+                )
+
                 ### Constructing ground truth dict
                 rgb_highlighted = highlight_result["rgb_highlighted"]
 
@@ -874,23 +882,37 @@ class Engine:
                             phase=phase,
                             submodules_to_monitor={
                                 "highlight_decoder": getattr(
-                                    self.model.module.decoders if getattr(self.config, "USE_DATAPARALLEL", False) else self.model.decoders,
-                                    "highlight", None
+                                    self.model.module.decoders
+                                    if getattr(self.config, "USE_DATAPARALLEL", False)
+                                    else self.model.decoders,
+                                    "highlight",
+                                    None,
                                 ),
                                 "diffuse_decoder": getattr(
-                                    self.model.module.decoders if getattr(self.config, "USE_DATAPARALLEL", False) else self.model.decoders,
-                                    "diffuse", None
+                                    self.model.module.decoders
+                                    if getattr(self.config, "USE_DATAPARALLEL", False)
+                                    else self.model.decoders,
+                                    "diffuse",
+                                    None,
                                 ),
                                 "specular_decoder": getattr(
-                                    self.model.module.decoders if getattr(self.config, "USE_DATAPARALLEL", False) else self.model.decoders,
-                                    "specular", None
+                                    self.model.module.decoders
+                                    if getattr(self.config, "USE_DATAPARALLEL", False)
+                                    else self.model.decoders,
+                                    "specular",
+                                    None,
                                 ),
-                                "dinov3": self.model.module.dinov3 if getattr(self.config, "USE_DATAPARALLEL", False) else self.model.dinov3,
+                                "dinov3": self.model.module.dinov3
+                                if getattr(self.config, "USE_DATAPARALLEL", False)
+                                else self.model.dinov3,
                                 "token_inpaint": getattr(
-                                    self.model.module if getattr(self.config, "USE_DATAPARALLEL", False) else self.model,
-                                    "token_inpaint", None
+                                    self.model.module
+                                    if getattr(self.config, "USE_DATAPARALLEL", False)
+                                    else self.model,
+                                    "token_inpaint",
+                                    None,
                                 ),
-                            }
+                            },
                         )
 
                     except Exception as e:
@@ -1086,28 +1108,24 @@ class Engine:
                                 patch_inpaint_mask, patch_size=16
                             ).int()[0]
                         )
-                        gt_decomposition["pixel_supervision_mask"] = (
-                            rgb(
-                                pixel_supervision_mask.int(),
-                                resize=(
-                                    self.config.MODEL.RGB_ENCODER.IMAGE_SIZE,
-                                    self.config.MODEL.RGB_ENCODER.IMAGE_SIZE,
-                                ),
-                                as_tensor=True,
-                                colormap="gray",
-                            )
+                        gt_decomposition["pixel_supervision_mask"] = rgb(
+                            pixel_supervision_mask.int(),
+                            resize=(
+                                self.config.MODEL.RGB_ENCODER.IMAGE_SIZE,
+                                self.config.MODEL.RGB_ENCODER.IMAGE_SIZE,
+                            ),
+                            as_tensor=True,
+                            colormap="gray",
                         )
-                        pred_decomposition["pixel_supervision_mask"] = (
-                            rgb(
-                                pixel_supervision_mask.int() * diffuse,
-                                resize=(
-                                    self.config.MODEL.RGB_ENCODER.IMAGE_SIZE,
-                                    self.config.MODEL.RGB_ENCODER.IMAGE_SIZE,
-                                ),
-                                as_tensor=True,
-                            )
+                        pred_decomposition["pixel_supervision_mask"] = rgb(
+                            pixel_supervision_mask.int() * diffuse,
+                            resize=(
+                                self.config.MODEL.RGB_ENCODER.IMAGE_SIZE,
+                                self.config.MODEL.RGB_ENCODER.IMAGE_SIZE,
+                            ),
+                            as_tensor=True,
                         )
-                        
+
                         gt_decomposition["token_sup"] = (
                             rgb(
                                 diffuse_teacher_tokens[-1]
@@ -1126,7 +1144,8 @@ class Engine:
                             )
                             * patch_mask_to_pixel_mask(
                                 patch_supervision_mask, patch_size=16
-                            ).int()[0] * patch_mask_to_pixel_mask(
+                            ).int()[0]
+                            * patch_mask_to_pixel_mask(
                                 patch_inpaint_mask, patch_size=16
                             ).int()[0]
                         )
@@ -1148,7 +1167,8 @@ class Engine:
                             )
                             * patch_mask_to_pixel_mask(
                                 patch_supervision_mask, patch_size=16
-                            ).int()[0] * patch_mask_to_pixel_mask(
+                            ).int()[0]
+                            * patch_mask_to_pixel_mask(
                                 patch_inpaint_mask, patch_size=16
                             ).int()[0]
                         )
@@ -1368,7 +1388,7 @@ class Engine:
 
     def _save_checkpoint(self, epoch, is_best=False):
         """Save model checkpoint with enhanced state information"""
-        # Unwrap DataParallel and DictInputAdapter so we save the real model state_dict
+        # Unwrap DataParallel and DataParallelWrapper so we save the real model state_dict
         m = getattr(self.model, "module", self.model)
         model_for_save = getattr(m, "module", m)
         checkpoint = {
@@ -1501,25 +1521,23 @@ class Engine:
             prediction_row = panelize(
                 *[
                     (
-                        lambda _t: (
-                            rgb(
-                                _t[0] if _t[0] is not None else make_black_image(),
-                                as_tensor=True,
-                                resize=(448, 448),
-                                colormap=("gray" if _t[1] else None),
-                                label={
-                                    "position": "top-left",
-                                    "height": 40,
-                                    "margin": 1
-                                    if comp_name not in pred_decomposition
-                                    else 0,
-                                    "text": (
-                                        f"PRED {comp_name.capitalize()}"
-                                        if comp_name in pred_decomposition
-                                        else "NA"
-                                    ),
-                                },
-                            )
+                        lambda _t: rgb(
+                            _t[0] if _t[0] is not None else make_black_image(),
+                            as_tensor=True,
+                            resize=(448, 448),
+                            colormap=("gray" if _t[1] else None),
+                            label={
+                                "position": "top-left",
+                                "height": 40,
+                                "margin": 1
+                                if comp_name not in pred_decomposition
+                                else 0,
+                                "text": (
+                                    f"PRED {comp_name.capitalize()}"
+                                    if comp_name in pred_decomposition
+                                    else "NA"
+                                ),
+                            },
                         )
                     )(
                         _prepare_img_tensor(
@@ -1537,25 +1555,21 @@ class Engine:
             gt_row = panelize(
                 *[
                     (
-                        lambda _t: (
-                            rgb(
-                                _t[0] if _t[0] is not None else make_black_image(),
-                                as_tensor=True,
-                                resize=(448, 448),
-                                colormap=("gray" if _t[1] else None),
-                                label={
-                                    "position": "top-left",
-                                    "height": 40,
-                                    "margin": 1
-                                    if comp_name not in gt_decomposition
-                                    else 0,
-                                    "text": (
-                                        f"GT {comp_name.capitalize()}"
-                                        if comp_name in gt_decomposition
-                                        else "NA"
-                                    ),
-                                },
-                            )
+                        lambda _t: rgb(
+                            _t[0] if _t[0] is not None else make_black_image(),
+                            as_tensor=True,
+                            resize=(448, 448),
+                            colormap=("gray" if _t[1] else None),
+                            label={
+                                "position": "top-left",
+                                "height": 40,
+                                "margin": 1 if comp_name not in gt_decomposition else 0,
+                                "text": (
+                                    f"GT {comp_name.capitalize()}"
+                                    if comp_name in gt_decomposition
+                                    else "NA"
+                                ),
+                            },
                         )
                     )(
                         _prepare_img_tensor(
@@ -1581,7 +1595,7 @@ class Engine:
                 phase=phase,
                 test_idx=test_idx,
             )
-            
+
             # Optionally also save individual images separately
             if also_save_individual_images:
                 # Save key predicted components
@@ -1595,7 +1609,7 @@ class Engine:
                         phase=phase,
                         test_idx=test_idx,
                     )
-                
+
                 # Save other important predicted components
                 priority_pred_keys = ["specular", "diffuse", "AoP", "DoP"]
                 for comp_name in priority_pred_keys:
@@ -1616,7 +1630,7 @@ class Engine:
                             phase=phase,
                             test_idx=test_idx,
                         )
-                
+
                 # Save key ground truth components
                 priority_gt_keys = ["diffuse", "rgb_highlighted", "specular"]
                 for tensor_key in priority_gt_keys:
@@ -1645,7 +1659,7 @@ class Engine:
                                 phase=phase,
                                 test_idx=test_idx,
                             )
-            
+
             return visualization_dict
         else:
             # Create visualization dictionary
@@ -1765,9 +1779,16 @@ class Engine:
             )
             state_dict = checkpoint["model_state_dict"]
             # Strip "module." prefix if checkpoint was saved with DataParallel
-            state_dict = {k.replace("module.", "", 1) if k.startswith("module.") else k: v for k, v in state_dict.items()}
-            # Load into unwrapped real model (DataParallel and/or DictInputAdapter)
-            load_target = getattr(getattr(self.model, "module", self.model), "module", getattr(self.model, "module", self.model))
+            state_dict = {
+                k.replace("module.", "", 1) if k.startswith("module.") else k: v
+                for k, v in state_dict.items()
+            }
+            # Load into unwrapped real model (DataParallel and/or DataParallelWrapper)
+            load_target = getattr(
+                getattr(self.model, "module", self.model),
+                "module",
+                getattr(self.model, "module", self.model),
+            )
             load_target.load_state_dict(state_dict)
             self.optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
             # Load schedulers if present (support both new and legacy keys)
@@ -1918,11 +1939,18 @@ class Engine:
             self.logger.error("Failed to load checkpoint data")
             return False
 
-        # Load model state into unwrapped real model (DataParallel and/or DictInputAdapter)
+        # Load model state into unwrapped real model (DataParallel and/or DataParallelWrapper)
         try:
             state_dict = checkpoint_data["model_state_dict"]
-            state_dict = {k.replace("module.", "", 1) if k.startswith("module.") else k: v for k, v in state_dict.items()}
-            load_target = getattr(getattr(self.model, "module", self.model), "module", getattr(self.model, "module", self.model))
+            state_dict = {
+                k.replace("module.", "", 1) if k.startswith("module.") else k: v
+                for k, v in state_dict.items()
+            }
+            load_target = getattr(
+                getattr(self.model, "module", self.model),
+                "module",
+                getattr(self.model, "module", self.model),
+            )
             load_target.load_state_dict(state_dict)
             self.logger.info("Loaded model state from checkpoint", context="RESUME")
         except Exception as e:

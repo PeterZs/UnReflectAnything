@@ -21,7 +21,11 @@ AVAILABLE_METRICS = {
     "psnr": {"function": "psnr_metric", "higher_better": True, "name": "PSNR (dB)"},
     "ssim": {"function": "ssim_metric", "higher_better": True, "name": "SSIM"},
     "mse": {"function": "mse_metric", "higher_better": False, "name": "MSE"},
-    "deltaE2000": {"function": "deltaE2000_metric", "higher_better": False, "name": "Delta E 2000"},
+    "deltaE2000": {
+        "function": "deltaE2000_metric",
+        "higher_better": False,
+        "name": "Delta E 2000",
+    },
     "gmsd": {"function": "gmsd_metric", "higher_better": False, "name": "GMSD"},
     "dists": {"function": "dists_metric", "higher_better": False, "name": "DISTS"},
 }
@@ -55,10 +59,13 @@ def _load_images_from_directory(
     from PIL import Image
     from torchvision.transforms import functional as TF
 
-    paths = sorted([
-        p for p in directory.rglob("*")
-        if p.is_file() and p.suffix.lower() in extensions
-    ])
+    paths = sorted(
+        [
+            p
+            for p in directory.rglob("*")
+            if p.is_file() and p.suffix.lower() in extensions
+        ]
+    )
 
     if not paths:
         raise ValueError(f"No images found in {directory}")
@@ -230,7 +237,9 @@ def evaluate_images(
             if isinstance(output, Tensor):
                 reference_tensor, _ = _load_images_from_directory(reference_path)
             else:
-                ref_tensor_full, ref_paths_full = _load_images_from_directory(reference_path)
+                ref_tensor_full, ref_paths_full = _load_images_from_directory(
+                    reference_path
+                )
 
                 # Match images
                 if is_single_file:
@@ -239,7 +248,7 @@ def evaluate_images(
                     out_name = output_paths[0].name
                     if out_name in ref_by_name:
                         idx, _ = ref_by_name[out_name]
-                        reference_tensor = ref_tensor_full[idx:idx+1]
+                        reference_tensor = ref_tensor_full[idx : idx + 1]
                     else:
                         raise ValueError(f"No matching reference found for {out_name}")
                 else:
@@ -291,7 +300,9 @@ def evaluate_images(
         func = getattr(metrics_module, func_name, None)
 
         if func is None:
-            print(f"Warning: Metric function {func_name} not found, skipping {metric_name}")
+            print(
+                f"Warning: Metric function {func_name} not found, skipping {metric_name}"
+            )
             continue
 
         try:
@@ -299,10 +310,18 @@ def evaluate_images(
             if metric_name in ("psnr",):
                 # PSNR doesn't take mask in the current implementation
                 value = func(output_tensor, reference_tensor, reduction="mean")
-            elif mask_tensor is not None and metric_name in ("ssim", "mse", "deltaE2000"):
-                value = func(output_tensor, reference_tensor, mask=mask_tensor, reduction="mean")
+            elif mask_tensor is not None and metric_name in (
+                "ssim",
+                "mse",
+                "deltaE2000",
+            ):
+                value = func(
+                    output_tensor, reference_tensor, mask=mask_tensor, reduction="mean"
+                )
             elif mask_tensor is not None and metric_name in ("gmsd", "dists"):
-                value = func(output_tensor, reference_tensor, mask=mask_tensor, reduction="mean")
+                value = func(
+                    output_tensor, reference_tensor, mask=mask_tensor, reduction="mean"
+                )
             else:
                 value = func(output_tensor, reference_tensor, reduction="mean")
 
@@ -334,7 +353,9 @@ def print_results(
     print(f"\n{title}")
     print("-" * 40)
     for metric_name, value in results.items():
-        info = AVAILABLE_METRICS.get(metric_name, {"name": metric_name, "higher_better": None})
+        info = AVAILABLE_METRICS.get(
+            metric_name, {"name": metric_name, "higher_better": None}
+        )
         display_name = info.get("name", metric_name)
         higher_better = info.get("higher_better")
 

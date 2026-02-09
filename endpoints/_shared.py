@@ -49,6 +49,7 @@ def get_cache_dir(subdir: Optional[str] = "") -> Path:
         base = os.environ.get("XDG_CACHE_HOME", os.path.expanduser("~/.cache"))
     if subdir not in ["weights", "images", "notebooks", "configs"]:
         import warnings
+
         warnings.warn(
             f"Unknown asset subdir '{subdir}', returning parent cache dir. "
             "Valid options: 'weights', 'images', 'notebooks', 'configs'."
@@ -61,6 +62,7 @@ def _ensure_huggingface_hub():
     """Ensure huggingface_hub is installed, exit with helpful message if not."""
     try:
         from huggingface_hub import snapshot_download, hf_hub_download
+
         return snapshot_download, hf_hub_download
     except ImportError:
         print(
@@ -165,6 +167,7 @@ def download_notebooks(
                     item.rename(target)
                 elif item.is_dir():
                     import shutil
+
                     if target.exists():
                         shutil.rmtree(target)
                     shutil.move(str(item), str(target))
@@ -203,6 +206,7 @@ def download_configs(
                     item.rename(target)
                 elif item.is_dir():
                     import shutil
+
                     if target.exists():
                         shutil.rmtree(target)
                     shutil.move(str(item), str(target))
@@ -240,9 +244,7 @@ def _collect_image_paths(
     """Collect image paths under root matching extensions (case-insensitive)."""
     lower_exts = tuple(ext.lower() for ext in extensions)
     paths = [
-        p
-        for p in root.rglob("*")
-        if p.is_file() and p.suffix.lower() in lower_exts
+        p for p in root.rglob("*") if p.is_file() and p.suffix.lower() in lower_exts
     ]
     return sorted(paths)
 
@@ -255,6 +257,7 @@ def _resolve_device(device: str) -> str:
     Otherwise returns the given device string (e.g. 'cuda:1', 'cpu').
     """
     import torch
+
     if not torch.cuda.is_available():
         return "cpu"
     if device == "cuda":
@@ -269,6 +272,7 @@ def _apply_config_to_options(options: Any, config: Any) -> Any:
     brightness_threshold, resize_output, num_workers.
     """
     import yaml
+
     if isinstance(config, (str, Path)):
         config_path = Path(config).expanduser().resolve()
         if config_path.exists():

@@ -18,6 +18,7 @@ from unreflectanything._shared import DEFAULT_IMAGE_EXTENSIONS, _collect_image_p
 
 
 if Dataset is not None:
+
     class ImageDirDataset(Dataset):  # type: ignore[no-redef]
         """
         Dataset that reads images from a directory and returns tensors.

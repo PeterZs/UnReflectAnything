@@ -118,8 +118,6 @@ def detect_aval_cpus():
     return cpus
 
 
-
-
 def is_all_tensors_on_gpu(container):
     """Check if all items in a container are GPU tensors."""
     if isinstance(container, dict):
@@ -129,8 +127,6 @@ def is_all_tensors_on_gpu(container):
     elif isinstance(container, (list, tuple)):
         return all(isinstance(v, torch.Tensor) and v.is_cuda for v in container)
     return False
-
-
 
 
 def is_all_tensors_on_gpu(container):

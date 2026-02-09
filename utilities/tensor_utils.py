@@ -320,7 +320,6 @@ def embedding_mask_from_pixels(
         torch.Tensor: Binary mask for embeddings of shape (B, embedding_dim, H/patch_size, W/patch_size)
     """
     B, _, H, W = pixel_mask.shape
-    device = pixel_mask.device
 
     # Verify that all channels are equal
     assert torch.all(pixel_mask[:, 0] == pixel_mask[:, 1]) and torch.all(
@@ -556,7 +555,7 @@ def interpolate_featuremap(
         num_invalid = len(invalid_y)
 
         # Expand indices for all channels
-        batch_idx = (
+        (
             torch.arange(num_invalid, device=device)
             .view(1, num_invalid, 1)
             .expand(C, num_invalid, k)
@@ -608,7 +607,6 @@ def inpaint(
     """
 
     B, W1, W2 = image.shape
-    device = image.device
 
     # Create mask for missing values
     base_mask = (image != missing_value).float()  # shape: (B, W, W)
@@ -647,14 +645,15 @@ def inpaint(
 
     return inpainted_img
 
+
 def tensor_dict_summarize(tensor_dict):
     """
     Print summary of tensors in a dictionary.
-    
+
     Args:
         tensor_dict: Dictionary containing torch tensors
     """
-    
+
     for key, value in tensor_dict.items():
         if isinstance(value, torch.Tensor):
             richprint(f"{key}: shape={tuple(value.shape)}, device={value.device}")

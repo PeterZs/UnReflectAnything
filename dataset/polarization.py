@@ -32,7 +32,7 @@ class PolarizationProcessor:
         tau_I: float = 0.50,
         tau_sat: float = 0.20,
         k_soft: float = 10.0,
-        noise_sigma: float | None = None,   # if None, estimated crudely from S1/S2
+        noise_sigma: float | None = None,  # if None, estimated crudely from S1/S2
     ) -> None:
         self.rho_s = rho_s
         self.eps = eps
@@ -104,32 +104,32 @@ class PolarizationProcessor:
         area = float(k * k)
 
         # --- vertical pass (pad H only) ---
-        x_pad = F.pad(x, (0, 0, r, r), mode='reflect')          # [B,C,H+2r,W]
-        cs = torch.cumsum(x_pad, dim=2)                         # [B,C,H+2r,W]
+        x_pad = F.pad(x, (0, 0, r, r), mode="reflect")  # [B,C,H+2r,W]
+        cs = torch.cumsum(x_pad, dim=2)  # [B,C,H+2r,W]
         cs = torch.cat([torch.zeros_like(cs[:, :, :1, :]), cs], dim=2)  # prefix zero
 
         # window sum over height -> [B,C,H,W]
-        vsum = cs[:, :, k:(k + H), :] - cs[:, :, :H, :]
+        vsum = cs[:, :, k : (k + H), :] - cs[:, :, :H, :]
 
         # --- horizontal pass (pad W only) ---
-        vsum_pad = F.pad(vsum, (r, r, 0, 0), mode='reflect')    # [B,C,H,W+2r]
-        cs2 = torch.cumsum(vsum_pad, dim=3)                     # [B,C,H,W+2r]
+        vsum_pad = F.pad(vsum, (r, r, 0, 0), mode="reflect")  # [B,C,H,W+2r]
+        cs2 = torch.cumsum(vsum_pad, dim=3)  # [B,C,H,W+2r]
         cs2 = torch.cat([torch.zeros_like(cs2[:, :, :, :1]), cs2], dim=3)
 
         # window sum over width -> [B,C,H,W]
-        hsum = cs2[:, :, :, k:(k + W)] - cs2[:, :, :, :W]
+        hsum = cs2[:, :, :, k : (k + W)] - cs2[:, :, :, :W]
 
         return hsum / area
 
-
-
-    def _fast_guided_filter(self, I_chw: torch.Tensor, p_hw: torch.Tensor) -> torch.Tensor:
+    def _fast_guided_filter(
+        self, I_chw: torch.Tensor, p_hw: torch.Tensor
+    ) -> torch.Tensor:
         """
         I_chw: [3,H,W] guide in [0,1]
         p_hw:  [H,W]   src  in [0,1]
         return: [H,W]
         """
-        I = I_chw.unsqueeze(0)          # [1,3,H,W]
+        I = I_chw.unsqueeze(0)  # [1,3,H,W]
         p = p_hw.unsqueeze(0).unsqueeze(0)  # [1,1,H,W]
         mean_I = self._box_filter(x=I, r=self.guided_r)
         mean_p = self._box_filter(p, self.guided_r)
@@ -189,9 +189,11 @@ class PolarizationProcessor:
     # ---------- core specular estimator (used by all loaders) ----------
     def _compute_spec_from_tiles(
         self,
-        I0_rgb: torch.Tensor, I45_rgb: torch.Tensor,
-        I90_rgb: torch.Tensor, I135_rgb: torch.Tensor,
-        use_equal_luma: bool = False
+        I0_rgb: torch.Tensor,
+        I45_rgb: torch.Tensor,
+        I90_rgb: torch.Tensor,
+        I135_rgb: torch.Tensor,
+        use_equal_luma: bool = False,
     ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
         """
         Inputs are HxWx3 (float [0,1]).
@@ -199,43 +201,55 @@ class PolarizationProcessor:
         """
         # Linearize if desired
         if self.use_linear_rgb:
-            I0_rgb   = self._rgb_to_linear(I0_rgb)
-            I45_rgb  = self._rgb_to_linear(I45_rgb)
-            I90_rgb  = self._rgb_to_linear(I90_rgb)
+            I0_rgb = self._rgb_to_linear(I0_rgb)
+            I45_rgb = self._rgb_to_linear(I45_rgb)
+            I90_rgb = self._rgb_to_linear(I90_rgb)
             I135_rgb = self._rgb_to_linear(I135_rgb)
 
         # Luminance
-        toY = self._to_luminance_equal if use_equal_luma else self._to_luminance_standard
-        I0   = toY(I0_rgb)
-        I45  = toY(I45_rgb)
-        I90  = toY(I90_rgb)
+        toY = (
+            self._to_luminance_equal if use_equal_luma else self._to_luminance_standard
+        )
+        I0 = toY(I0_rgb)
+        I45 = toY(I45_rgb)
+        I90 = toY(I90_rgb)
         I135 = toY(I135_rgb)
 
         # Robust Stokes (average both pairs for S0)
         S0a = I0 + I90
         S0b = I45 + I135
-        S0  = 0.5 * (S0a + S0b)
-        S1  = I0 - I90
-        S2  = I45 - I135
+        S0 = 0.5 * (S0a + S0b)
+        S1 = I0 - I90
+        S2 = I45 - I135
 
         # DoLP with de-biasing
         mag2 = S1.square() + S2.square()
         if self.noise_sigma is None:
             # crude noise estimate from local variation
-            blurS1 = F.avg_pool2d(S1.unsqueeze(0).unsqueeze(0), 7, stride=1, padding=3).squeeze()
-            blurS2 = F.avg_pool2d(S2.unsqueeze(0).unsqueeze(0), 7, stride=1, padding=3).squeeze()
+            blurS1 = F.avg_pool2d(
+                S1.unsqueeze(0).unsqueeze(0), 7, stride=1, padding=3
+            ).squeeze()
+            blurS2 = F.avg_pool2d(
+                S2.unsqueeze(0).unsqueeze(0), 7, stride=1, padding=3
+            ).squeeze()
             sigma2 = (blurS1.std() + blurS2.std()) / 2
             sigma2 = (sigma2 + 1e-6) ** 2
         else:
-            sigma2 = torch.as_tensor(self.noise_sigma**2, dtype=S0.dtype, device=S0.device)
+            sigma2 = torch.as_tensor(
+                self.noise_sigma**2, dtype=S0.dtype, device=S0.device
+            )
 
-        DoLP_raw = (mag2.sqrt() / torch.clamp(S0, min=self.eps)).clamp(0, 1)
-        DoLP_db  = ((mag2 - sigma2).clamp_min(0).sqrt() / torch.clamp(S0, min=self.eps)).clamp(0, 1)
+        (mag2.sqrt() / torch.clamp(S0, min=self.eps)).clamp(0, 1)
+        DoLP_db = (
+            (mag2 - sigma2).clamp_min(0).sqrt() / torch.clamp(S0, min=self.eps)
+        ).clamp(0, 1)
 
         # Edge-aware smoothing guided by the average RGB of the four tiles
-        guide_rgb = torch.stack([I0_rgb, I45_rgb, I90_rgb, I135_rgb], dim=0).mean(0)  # HxWx3
+        guide_rgb = torch.stack([I0_rgb, I45_rgb, I90_rgb, I135_rgb], dim=0).mean(
+            0
+        )  # HxWx3
         guide_chw = guide_rgb.permute(2, 0, 1).contiguous()
-        
+
         dolp_smooth = self._fast_guided_filter(guide_chw, DoLP_db)
 
         # Additional cues: intensity & saturation
@@ -245,9 +259,9 @@ class PolarizationProcessor:
         # Soft fusion (product of sigmoids)
         sig = torch.sigmoid
         f_spec = (
-            sig(self.k_soft * (dolp_smooth - self.tau_dolp)) *
-            sig(self.k_soft * (I_norm - self.tau_I)) *
-            sig(self.k_soft * ((1.0 - sat.squeeze(0)) - self.tau_sat))
+            sig(self.k_soft * (dolp_smooth - self.tau_dolp))
+            * sig(self.k_soft * (I_norm - self.tau_I))
+            * sig(self.k_soft * ((1.0 - sat.squeeze(0)) - self.tau_sat))
         ).clamp(0, 1)
 
         DoLP_final = self._mask_dolp(S0, dolp_smooth)  # keep your masking behavior
@@ -263,9 +277,9 @@ class PolarizationProcessor:
         H, W, _ = pol_rgb.shape
         hh, hw = H // 2, W // 2
 
-        I0_rgb   = pol_rgb[:hh, :hw, :]
-        I45_rgb  = pol_rgb[:hh, hw:, :]
-        I90_rgb  = pol_rgb[hh:, hw:, :]
+        I0_rgb = pol_rgb[:hh, :hw, :]
+        I45_rgb = pol_rgb[:hh, hw:, :]
+        I90_rgb = pol_rgb[hh:, hw:, :]
         I135_rgb = pol_rgb[hh:, :hw, :]
 
         S0, S1, S2, DoLP, f_spec = self._compute_spec_from_tiles(
@@ -273,9 +287,13 @@ class PolarizationProcessor:
         )
         AoP = 0.5 * torch.atan2(S2, S1)
 
-        return self._finalize_common(I0_rgb, I45_rgb, I90_rgb, I135_rgb, S0, S1, S2, f_spec, AoP, DoLP)
+        return self._finalize_common(
+            I0_rgb, I45_rgb, I90_rgb, I135_rgb, S0, S1, S2, f_spec, AoP, DoLP
+        )
 
-    def load_separate_files(self, pol_base_path: str, pol_ext: str) -> Dict[str, torch.Tensor]:
+    def load_separate_files(
+        self, pol_base_path: str, pol_ext: str
+    ) -> Dict[str, torch.Tensor]:
         pol_paths = {
             "000": f"{pol_base_path}_000{pol_ext}",
             "045": f"{pol_base_path}_045{pol_ext}",
@@ -286,11 +304,13 @@ class PolarizationProcessor:
         pol_images: Dict[str, torch.Tensor] = {}
         for angle, path in pol_paths.items():
             img = Image.open(path).convert("RGB")
-            pol_images[angle] = torch.from_numpy(np.asarray(img, dtype=np.float32)) / 255.0
+            pol_images[angle] = (
+                torch.from_numpy(np.asarray(img, dtype=np.float32)) / 255.0
+            )
 
-        I0_rgb   = pol_images["000"]
-        I45_rgb  = pol_images["045"]
-        I90_rgb  = pol_images["090"]
+        I0_rgb = pol_images["000"]
+        I45_rgb = pol_images["045"]
+        I90_rgb = pol_images["090"]
         I135_rgb = pol_images["135"]
 
         S0, S1, S2, DoLP, f_spec = self._compute_spec_from_tiles(
@@ -298,7 +318,9 @@ class PolarizationProcessor:
         )
         AoP = 0.5 * torch.atan2(S2, S1)
 
-        return self._finalize_common(I0_rgb, I45_rgb, I90_rgb, I135_rgb, S0, S1, S2, f_spec, AoP, DoLP)
+        return self._finalize_common(
+            I0_rgb, I45_rgb, I90_rgb, I135_rgb, S0, S1, S2, f_spec, AoP, DoLP
+        )
 
     def load_separate_stokes(self, pol_base_path: str) -> Dict[str, torch.Tensor]:
         stokes_paths = {
@@ -322,7 +344,9 @@ class PolarizationProcessor:
         sigma2 = torch.as_tensor(
             (self.noise_sigma or 0.0) ** 2, dtype=S0.dtype, device=S0.device
         )
-        DoLP_db = ((mag2 - sigma2).clamp_min(0).sqrt() / torch.clamp(S0, min=self.eps)).clamp(0, 1)
+        DoLP_db = (
+            (mag2 - sigma2).clamp_min(0).sqrt() / torch.clamp(S0, min=self.eps)
+        ).clamp(0, 1)
 
         # Build a guidance RGB from S0 (grayscale) for smoothing
         guide_rgb = torch.stack([S0, S0, S0], dim=0)  # [3,H,W]
@@ -331,7 +355,10 @@ class PolarizationProcessor:
         # f_spec fusion with intensity only (no color available here)
         I_norm = self._normalize01(S0)
         sig = torch.sigmoid
-        f_spec = (sig(self.k_soft * (DoLP - self.tau_dolp)) * sig(self.k_soft * (I_norm - self.tau_I))).clamp(0, 1)
+        f_spec = (
+            sig(self.k_soft * (DoLP - self.tau_dolp))
+            * sig(self.k_soft * (I_norm - self.tau_I))
+        ).clamp(0, 1)
 
         DoLP = self._mask_dolp(S0, DoLP)
         f_spec = self._mask_dolp(S0, f_spec)
@@ -345,7 +372,9 @@ class PolarizationProcessor:
         I90_rgb = torch.stack([I90, I90, I90], dim=-1)
         I135_rgb = torch.zeros_like(I0_rgb)
 
-        return self._finalize_common(I0_rgb, I45_rgb, I90_rgb, I135_rgb, S0, S1, S2, f_spec, AoP, DoLP)
+        return self._finalize_common(
+            I0_rgb, I45_rgb, I90_rgb, I135_rgb, S0, S1, S2, f_spec, AoP, DoLP
+        )
 
     def load_single_file_topdown(self, pol_path: str) -> Dict[str, torch.Tensor]:
         pol_img = Image.open(pol_path).convert("RGB")
@@ -354,17 +383,19 @@ class PolarizationProcessor:
         H, W, _ = pol_rgb.shape
         nh = H // 4
 
-        I0_rgb   = pol_rgb[0 * nh:1 * nh, :, :]
-        I45_rgb  = pol_rgb[1 * nh:2 * nh, :, :]
-        I90_rgb  = pol_rgb[2 * nh:3 * nh, :, :]
-        I135_rgb = pol_rgb[3 * nh:4 * nh, :, :]
+        I0_rgb = pol_rgb[0 * nh : 1 * nh, :, :]
+        I45_rgb = pol_rgb[1 * nh : 2 * nh, :, :]
+        I90_rgb = pol_rgb[2 * nh : 3 * nh, :, :]
+        I135_rgb = pol_rgb[3 * nh : 4 * nh, :, :]
 
         S0, S1, S2, DoLP, f_spec = self._compute_spec_from_tiles(
             I0_rgb, I45_rgb, I90_rgb, I135_rgb, use_equal_luma=False
         )
         AoP = 0.5 * torch.atan2(S2, S1)
 
-        return self._finalize_common(I0_rgb, I45_rgb, I90_rgb, I135_rgb, S0, S1, S2, f_spec, AoP, DoLP)
+        return self._finalize_common(
+            I0_rgb, I45_rgb, I90_rgb, I135_rgb, S0, S1, S2, f_spec, AoP, DoLP
+        )
 
     def load(
         self,

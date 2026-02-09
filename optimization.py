@@ -246,7 +246,9 @@ class EarlyStopping:
 
                 self.bucket_name = get_gcs_bucket_name()
             except (ImportError, ValueError) as e:
-                logger.warning(f"Warning: Could not get bucket name from environment: {str(e)}")
+                logger.warning(
+                    f"Warning: Could not get bucket name from environment: {str(e)}"
+                )
                 self.bucket_name = None
         else:
             self.bucket_name = bucket_name
@@ -282,7 +284,9 @@ class EarlyStopping:
                 self.save_checkpoint(val_loss, model, epoch, optimizer, config, wandb)
                 self.counter = 0
 
-    def save_checkpoint(self, val_loss, model, epoch, optimizer=None, config=None, wandb=None):
+    def save_checkpoint(
+        self, val_loss, model, epoch, optimizer=None, config=None, wandb=None
+    ):
         """Saves model when validation loss decrease."""
         if self.verbose:
             if epoch != 0:
@@ -302,9 +306,13 @@ class EarlyStopping:
             checkpoint = {
                 "epoch": epoch,
                 "model_state_dict": model.state_dict(),
-                "optimizer_state_dict": optimizer.state_dict() if optimizer is not None else None,
+                "optimizer_state_dict": optimizer.state_dict()
+                if optimizer is not None
+                else None,
                 "config": config if config is not None else {},
-                "wandb_run_id": getattr(wandb, 'id', None) if wandb is not None else None,
+                "wandb_run_id": getattr(wandb, "id", None)
+                if wandb is not None
+                else None,
             }
 
             torch.save(checkpoint, checkpoint_path, pickle_module=dill)

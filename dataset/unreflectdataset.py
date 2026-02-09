@@ -7,17 +7,16 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 from PIL import Image
-from torch.utils.data import ConcatDataset, Dataset
+from torch.utils.data import Dataset
 
 from logger import get_logger
 from .polarization import PolarizationProcessor
-
 logger = get_logger(__name__).set_context("DATASET")
 
 
-class RGBP_Dataset(Dataset):
+class UnReflectAnything_Dataset(Dataset):
     """
-    Optimized version of RGBP_Dataset dataset with performance improvements:
+    Optimized version of UnReflectAnything_Dataset dataset with performance improvements:
     1. Reduced tensor/numpy conversions
     2. Optional caching
     3. Simplified processing pipeline
@@ -40,7 +39,7 @@ class RGBP_Dataset(Dataset):
 
     RGB-only mode:
     - load_rgb_only: bool - If True, forces loading only RGB data and ignores polarization data
-    
+
     File paths:
     - return_filepaths: bool - If True, includes 'filepaths' dict in output with keys 'raw_path', 'pol_path', 'diffuse_path', 'intrinsics_path'
     """
@@ -204,7 +203,7 @@ class RGBP_Dataset(Dataset):
 
         Returns:
             Resized tensor of shape [C, target_H, target_W] or [target_H, target_W]
-            
+
         Resize modes:
             - "crop": Center crop to target size (no resizing)
             - "resize": Resize to target size (may distort aspect ratio)
@@ -244,16 +243,18 @@ class RGBP_Dataset(Dataset):
             # Resize to fit target size while maintaining aspect ratio, then center crop
             target_h, target_w = target_size
             current_h, current_w = current_size
-            
+
             # Calculate scale factor to fit the image into target size
             scale_h = target_h / current_h
             scale_w = target_w / current_w
-            scale = max(scale_h, scale_w)  # Use max to ensure we can crop to target size
-            
+            scale = max(
+                scale_h, scale_w
+            )  # Use max to ensure we can crop to target size
+
             # Calculate intermediate size after scaling
             intermediate_h = int(current_h * scale)
             intermediate_w = int(current_w * scale)
-            
+
             # Resize to intermediate size
             tensor = F.interpolate(
                 tensor.unsqueeze(0),  # Add batch dimension
@@ -261,13 +262,13 @@ class RGBP_Dataset(Dataset):
                 mode="bilinear",
                 align_corners=False,
             ).squeeze(0)  # Remove batch dimension
-            
+
             # Center crop to target size
             start_h = (intermediate_h - target_h) // 2
             end_h = start_h + target_h
             start_w = (intermediate_w - target_w) // 2
             end_w = start_w + target_w
-            
+
             tensor = tensor[..., start_h:end_h, start_w:end_w]
 
         elif self.resize_mode == "pad":
@@ -386,7 +387,9 @@ class RGBP_Dataset(Dataset):
         # If no include filter specified and not excluded, include the scene
         return True
 
-    def _find_scene_pairs(self) -> List[Tuple[str, Optional[str], Optional[str], Optional[str], bool]]:
+    def _find_scene_pairs(
+        self,
+    ) -> List[Tuple[str, Optional[str], Optional[str], Optional[str], bool]]:
         """
         Find matching RAW (RGB), optional diffuse, polarization, and intrinsics entries per scene.
 
@@ -440,7 +443,9 @@ class RGBP_Dataset(Dataset):
             # Get diffuse files if diffuse directory exists
             diffuse_files = []
             if diffuse_dir is not None and os.path.exists(diffuse_dir):
-                diffuse_files = [f for f in os.listdir(diffuse_dir) if f.endswith(self.rgb_ext)]
+                diffuse_files = [
+                    f for f in os.listdir(diffuse_dir) if f.endswith(self.rgb_ext)
+                ]
 
             # Subsample per scene folder if requested (load 1/N frames)
             if self.sample_every_n > 1:
@@ -711,7 +716,9 @@ class RGBP_Dataset(Dataset):
             "diffuse": I_diff,
         }
 
-    def _load_raw_and_diffuse(self, raw_path: str, diffuse_path: str) -> Dict[str, torch.Tensor]:
+    def _load_raw_and_diffuse(
+        self, raw_path: str, diffuse_path: str
+    ) -> Dict[str, torch.Tensor]:
         """Load RAW and DIFFUSE images and compute SPECULAR as raw - diffuse.
 
         Returns a dict with keys: 'raw', 'diffuse', 'specular' as CHW tensors in [0,1].
@@ -894,7 +901,9 @@ class RGBP_Dataset(Dataset):
             - File paths: 'filepaths' dict with keys 'raw_path', 'pol_path', 'diffuse_path', 'intrinsics_path' (if return_filepaths=True)
             All image tensors have shape [C, H, W] where H, W match target_size if specified
         """
-        raw_path, pol_path, diffuse_path, intrinsics_path, has_pol_data = self.scene_pairs[idx]
+        raw_path, pol_path, diffuse_path, intrinsics_path, has_pol_data = (
+            self.scene_pairs[idx]
+        )
 
         # Load data (potentially from cache)
         intrinsics = self._load_intrinsics(intrinsics_path)
@@ -989,7 +998,6 @@ class RGBP_Dataset(Dataset):
 
         # Resize all data to target size if specified
         if self.target_size is not None:
-
             # Resize RAW-related data
             if "raw" in sample:
                 sample["raw"] = self._resize_raw_tensor(sample["raw"])
@@ -1070,511 +1078,3 @@ class RGBP_Dataset(Dataset):
             sample["filepaths"] = filepaths
 
         return sample
-
-def from_config(
-    config: Dict, dataset_names: Optional[List[str]] = None
-) -> Dict[str, Union[Dataset, None]]:
-    """
-    Create datasets from configuration file.
-
-    This function reads the configuration file and creates training and validation datasets
-    based on the VAL_SCENES parameter. The logic is:
-    - VAL_SCENES: defines which scenes to use for validation
-    - TRAIN_SCENES: if provided and not None/[], overrides the default training scenes
-    - If TRAIN_SCENES is None/[], training uses all scenes except those in VAL_SCENES
-
-    Args:
-        config: Configuration dictionary loaded from config file
-        dataset_names: Optional list of dataset names to load. If None, loads all available datasets.
-
-    Returns:
-        Dictionary with 'training', 'validation', and 'test' keys containing ConcatDataset objects
-    """
-    if dataset_names is None:
-        # Get all available dataset names from config
-        dataset_names = []
-
-        datasets_config = config.DATASETS
-
-        if isinstance(datasets_config, dict):
-            datasets_value = datasets_config
-
-            if datasets_value is not None:
-                dataset_names = [
-                    name
-                    for name in datasets_value.keys()
-                    if isinstance(datasets_value[name], dict)
-                ]
-
-    if not dataset_names:
-        raise ValueError(
-            "No datasets found in configuration. Check DATASETS section in config file."
-        )
-
-    # Map dataset names to classes - this is where you add new dataset classes
-    dataset_classes = {
-        "SCRREAM": SCRREAM_Dataset,
-        "HOUSECAT6D": HOUSECAT6D_Dataset,
-        "POLARGB": POLARGB_Dataset,
-        "SCARED": SCARED_Dataset,
-        "STEREOMIS_TRACKING": STEREOMIS_TRACKING_Dataset,
-        "CHOLEC80": CHOLEC80_Dataset,
-        "CROMO": CROMO_Dataset,
-        "SYNTHETIC": SYNTHETIC_Dataset,
-        "PSD": PSD_Dataset,
-        # Future datasets will be added here by the user
-    }
-
-    train_datasets = []
-    val_datasets = []
-
-    # Global config parameters
-    global_config = config
-
-    # Get global scene configuration
-    global_train_scenes = global_config.get("TRAIN_SCENES", {}).get("value")
-    global_val_scenes = global_config.get("VAL_SCENES", {}).get("value")
-
-    logger.info(f"Processing {len(dataset_names)} datasets: {dataset_names}")
-
-    for dataset_name in dataset_names:
-        if dataset_name not in dataset_classes:
-            logger.warning(
-                f"Warning: Dataset class for '{dataset_name}' not found. Skipping."
-            )
-            logger.info(f"Available classes: {list(dataset_classes.keys())}")
-            continue
-
-        # Get dataset-specific config
-        datasets_value = global_config.DATASETS
-        if datasets_value is None:
-            raise ValueError("DATASETS['value'] is None in config")
-        dataset_config = datasets_value[dataset_name]
-        # Get root directory
-
-        # Extract configuration parameters with fallbacks to global config
-        def get_config_value(param_name, default_value):
-            """Helper to get parameter from dataset config or global config"""
-            dataset_value = dataset_config.get(param_name)
-            if dataset_value is not None:
-                return dataset_value
-            global_param = global_config.get(param_name, {})
-            if isinstance(global_param, dict) and "value" in global_param:
-                return global_param["value"]
-            return default_value
-
-        # root_dir = get_config_value("ROOT_", 0.6)
-        # os.path.expandvars(dataset_config.ROOT_DIR)
-        # if not os.path.exists(root_dir):
-        #     logger.warning(
-        #         f"Warning: Root directory '{root_dir}' for dataset '{dataset_name}' not found. Skipping."
-        #     )
-        #     continue
-        dataset_params = {
-            # "root_dir": get_config_value("ROOT", 0.6),
-            "rho_s": get_config_value("RHO_S", 0.6),
-            "eps": get_config_value("EPS", 1e-8),
-            "target_size": tuple(get_config_value("TARGET_SIZE", [224, 224])),
-            "resize_mode": get_config_value("RESIZE_MODE", "crop"),
-            "use_cache": get_config_value("USE_CACHE", True),
-            "simplify_upsampling": get_config_value("SIMPLIFY_UPSAMPLING", True),
-            "few_images": get_config_value("FEW_IMAGES", False),
-            "sample_every_n": get_config_value("SAMPLE_EVERY_N", 1),
-            # "polarization_format": get_config_value(
-            #     "POLARIZATION_FORMAT", "single_file_clock"
-            # ),
-            "load_rgb_only": get_config_value("LOAD_RGB_ONLY", False),
-            # Highlight options
-            "highlight_enable": get_config_value("HIGHLIGHT_ENABLE", False),
-            "highlight_brightness_threshold": get_config_value(
-                "HIGHLIGHT_BRIGHTNESS_THRESHOLD", 0.93
-            ),
-            "highlight_return_mask": get_config_value("HIGHLIGHT_RETURN_MASK", False),
-            "highlight_return_rect": get_config_value("HIGHLIGHT_RETURN_RECT", False),
-            "highlight_return_rect_as_rgb": get_config_value(
-                "HIGHLIGHT_RETURN_RECT_AS_RGB", False
-            ),
-        }
-
-        # Handle optional tuple conversion for rect size if provided
-        rect_size_val = get_config_value("HIGHLIGHT_RECT_SIZE", None)
-        if rect_size_val is not None:
-            try:
-                dataset_params["highlight_rect_size"] = tuple(rect_size_val)
-            except Exception:
-                dataset_params["highlight_rect_size"] = None
-
-        # Get scenes configuration with priority: global > dataset-specific
-        dataset_train_scenes = dataset_config.get("TRAIN_SCENES", [])
-        dataset_val_scenes = dataset_config.get("VAL_SCENES", [])
-
-        # Final scene determination with clear precedence
-        val_scenes = (
-            global_val_scenes if global_val_scenes is not None else dataset_val_scenes
-        )
-
-        # TRAIN_SCENES override logic: if global TRAIN_SCENES is provided and not empty, use it
-        if global_train_scenes is not None and len(global_train_scenes) > 0:
-            train_scenes = global_train_scenes
-            logger.info(f"Using global TRAIN_SCENES for {dataset_name}: {train_scenes}")
-        elif dataset_train_scenes and len(dataset_train_scenes) > 0:
-            train_scenes = dataset_train_scenes
-            logger.info(
-                f"Using dataset-specific TRAIN_SCENES for {dataset_name}: {train_scenes}"
-            )
-        else:
-            # Use all scenes except validation scenes
-            train_scenes = None
-            logger.info(
-                f"Using all scenes except VAL_SCENES for {dataset_name} training"
-            )
-
-        # Get dataset class
-        dataset_class = dataset_classes[dataset_name]
-
-        # Create training dataset
-        if train_scenes is not None and len(train_scenes) > 0:
-            dataset_params.update({"highlight_enable": True})
-
-            # Use specific training scenes
-            train_dataset = dataset_class(
-                include=train_scenes,
-                # highlight_enable=dataset_config.get("HIGHLIGHT_ENABLE"),
-                # highlight_brightness_threshold=dataset_config.get("HIGHLIGHT_BRIGHTNESS_THRESHOLD"),
-                # highlight_return_mask=dataset_config.get("HIGHLIGHT_RETURN_MASK"),
-                # highlight_rect_size=dataset_config.get("HIGHLIGHT_RECT_SIZE"),
-                # highlight_return_rect=dataset_config.get("HIGHLIGHT_RETURN_RECT"),
-                # highlight_return_rect_as_rgb=dataset_config.get("HIGHLIGHT_RETURN_RECT_AS_RGB"),
-                **dataset_params,
-            )
-            if len(train_dataset) > 0:
-                train_datasets.append(train_dataset)
-                logger.info(
-                    f"  ✓ Created training dataset for {dataset_name}: {len(train_dataset)} samples from specific scenes"
-                )
-            else:
-                logger.warning(f"  ✗ Training dataset for {dataset_name} is empty")
-        else:
-            # Use all scenes except validation scenes
-            exclude_scenes = val_scenes if val_scenes and len(val_scenes) > 0 else []
-            train_dataset = dataset_class(
-                exclude=exclude_scenes,
-                # highlight_enable=dataset_config.get("HIGHLIGHT_ENABLE"),
-                # highlight_brightness_threshold=dataset_config.get("HIGHLIGHT_BRIGHTNESS_THRESHOLD"),
-                # highlight_return_mask=dataset_config.get("HIGHLIGHT_RETURN_MASK"),
-                # highlight_rect_size=dataset_config.get("HIGHLIGHT_RECT_SIZE"),
-                # highlight_return_rect=dataset_config.get("HIGHLIGHT_RETURN_RECT"),
-                # highlight_return_rect_as_rgb=dataset_config.get("HIGHLIGHT_RETURN_RECT_AS_RGB"),
-                **dataset_params,
-            )
-            if len(train_dataset) > 0:
-                train_datasets.append(train_dataset)
-                excluded_text = (
-                    f" (excluding {len(exclude_scenes)} val scenes)"
-                    if exclude_scenes
-                    else ""
-                )
-                logger.info(
-                    f"  ✓ Created training dataset for {dataset_name}: {len(train_dataset)} samples{excluded_text}"
-                )
-            else:
-                logger.warning(f"  ✗ Training dataset for {dataset_name} is empty")
-
-        # Create validation dataset
-        if val_scenes and len(val_scenes) > 0:
-            # Overrides global highlight_enable. Validation dataset should have original images
-            dataset_params.update({"highlight_enable": False})
-            val_dataset = dataset_class(
-                include=val_scenes,
-                **dataset_params,
-            )
-            if len(val_dataset) > 0:
-                val_datasets.append(val_dataset)
-                logger.info(
-                    f"  ✓ Created validation dataset for {dataset_name}: {len(val_dataset)} samples from {len(val_scenes)} scenes"
-                )
-            else:
-                logger.warning(f"  ✗ Validation dataset for {dataset_name} is empty")
-        else:
-            logger.warning(f"  ! No validation scenes specified for {dataset_name}")
-
-    # Create ConcatDatasets
-    result = {
-        "training": ConcatDataset(train_datasets) if train_datasets else None,
-        "validation": ConcatDataset(val_datasets) if val_datasets else None,
-        "test": ConcatDataset(val_datasets) if val_datasets else None,
-    }
-
-    # Print summary
-    logger.info("=== Dataset Creation Summary ===")
-    logger.info(
-        f"Training:   {len(result['training']) if result['training'] else 0} total samples"
-    )
-    logger.info(
-        f"Validation: {len(result['validation']) if result['validation'] else 0} total samples"
-    )
-    logger.info(
-        f"Test:       {len(result['test']) if result['test'] else 0} total samples"
-    )
-
-    # Print detailed breakdown if multiple datasets
-    # if len(dataset_names) > 1:
-    #     logger.info(f"Dataset breakdown:")
-    #     for i, dataset_name in enumerate(dataset_names):
-    #         if i < len(train_datasets):
-    #             logger.info(f"  {dataset_name} - Train: {len(train_datasets[i])}, Val: {len(val_datasets[i]) if i < len(val_datasets) else 0}")
-
-    return result
-
-# Dataset-specific classes inheriting from base RGBP_Dataset class
-class SCRREAM_Dataset(RGBP_Dataset):
-    """
-    SCRREAM dataset implementation for polarization-based reflection removal.
-
-    Inherits all functionality from the base RGBP_Dataset class.
-    This class can be extended with SCRREAM-specific preprocessing,
-    data augmentation, or validation logic as needed.
-
-    The SCRREAM dataset contains RGB images with corresponding polarization
-    data for training reflection removal models.
-    """
-
-    def __init__(self, **kwargs) -> None:
-        """
-        Initialize SCRREAM dataset.
-
-        Args:
-            **kwargs: All arguments passed to parent RGBP_Dataset class
-        """
-        super().__init__(
-            root_dir="$DATASET_DIR/SCRREAM/",
-            rgb_ext=".png",
-            pol_ext=".png",
-            polarization_format="single_file_clock",  # "single_file_clock", "separate_files" or "mosaic"
-            **kwargs,
-        )
-        # Add any SCRREAM-specific initialization here
-
-
-class HOUSECAT6D_Dataset(RGBP_Dataset):
-    """
-    HOUSECAT6D dataset implementation for 6D pose estimation with polarization.
-
-    Inherits all functionality from the base RGBP_Dataset class.
-    This class can be extended with HOUSECAT6D-specific preprocessing,
-    pose annotation loading, or 6D pose-specific data augmentation.
-
-    The HOUSECAT6D dataset provides RGB and polarization data along with
-    6D object pose annotations for training pose estimation models.
-    """
-
-    def __init__(self, **kwargs) -> None:
-        """
-        Initialize HOUSECAT6D dataset.
-
-        Args:
-            **kwargs: All arguments passed to parent RGBP_Dataset class
-        """
-        super().__init__(
-            root_dir="$DATASET_DIR/HouseCat6D/",
-            rgb_ext=".png",
-            pol_ext=".png",
-            polarization_format="single_file_clock",  # "single_file_clock", "separate_files" or "mosaic"
-            **kwargs,
-        )
-        # Add any HOUSECAT6D-specific initialization here
-
-
-class POLARGB_Dataset(RGBP_Dataset):
-    """
-    PolaRGB dataset implementation for polarization-guided RGB processing.
-
-    Inherits all functionality from the base RGBP_Dataset class.
-    This class can be extended with PolaRGB-specific preprocessing,
-    polarization analysis, or RGB enhancement techniques.
-
-    The PolaRGB dataset combines RGB imagery with polarization measurements
-    for improved scene understanding and image enhancement tasks.
-    """
-
-    def __init__(self, **kwargs) -> None:
-        """
-        Initialize PolaRGB dataset.
-
-        Args:
-            **kwargs: All arguments passed to parent RGBP_Dataset class
-        """
-        super().__init__(
-            root_dir="$DATASET_DIR/PolaRGB/",
-            rgb_ext=".png",
-            pol_ext=".png",
-            polarization_format="separate_files",  # "single_file_clock", "separate_files" or "mosaic"
-            **kwargs,
-        )
-        # Add any PolaRGB-specific initialization here
-
-class CROMO_Dataset(RGBP_Dataset):
-    """
-    CROMO dataset implementation for polarization-guided RGB processing.
-
-    Inherits all functionality from the base RGBP_Dataset class.
-    This class can be extended with CROMO-specific preprocessing,
-    polarization analysis, or RGB enhancement techniques.
-
-    The CROMO dataset combines RGB imagery with polarization measurements
-    for improved scene understanding and image enhancement tasks.
-    """
-
-    def __init__(self, **kwargs) -> None:
-        """
-        Initialize CROMO dataset.
-
-        Args:
-            **kwargs: All arguments passed to parent RGBP_Dataset class
-        """
-        super().__init__(
-            root_dir="$DATASET_DIR/CroMo/",
-            rgb_dir_name="rgb/left/data",
-            pol_dir_name="polarized/left/data/",
-            rgb_ext=".png",
-            pol_ext=".png",
-            polarization_format="single_file_topdown", 
-            **kwargs,
-        )
-        # Add any SCARED-specific initialization here
-        
-class SCARED_Dataset(RGBP_Dataset):
-    """
-    SCARED dataset implementation for polarization-guided RGB processing.
-
-    Inherits all functionality from the base RGBP_Dataset class.
-    This class can be extended with SCARED-specific preprocessing,
-    polarization analysis, or RGB enhancement techniques.
-
-    The SCARED dataset combines RGB imagery with polarization measurements
-    for improved scene understanding and image enhancement tasks.
-    """
-
-    def __init__(self, **kwargs) -> None:
-        """
-        Initialize SCARED dataset.
-
-        Args:
-            **kwargs: All arguments passed to parent RGBP_Dataset class
-        """
-        super().__init__(
-            root_dir="$DATASET_DIR/SCARED/",
-            rgb_ext=".png",
-            pol_ext=".png",
-            **kwargs,
-        )
-        # Add any SCARED-specific initialization here
-        
-class STEREOMIS_TRACKING_Dataset(RGBP_Dataset):
-    """
-    STEREOMIS_TRACKING dataset implementation for polarization-guided RGB processing.
-    Inherits all functionality from the base RGBP_Dataset class.
-    This class can be extended with STEREOMIS_TRACKING-specific preprocessing,
-    polarization analysis, or RGB enhancement techniques.
-
-    The STEREOMIS_TRACKING dataset combines RGB imagery with polarization measurements
-    for improved scene understanding and image enhancement tasks.
-    """
-
-    def __init__(self, **kwargs) -> None:
-        """
-        Initialize SCARED dataset.
-
-        Args:
-            **kwargs: All arguments passed to parent RGBP_Dataset class
-        """
-        super().__init__(
-            root_dir="$DATASET_DIR/StereoMIS_Tracking/",
-            rgb_dir_name="video_frames",
-            rgb_ext=".png",
-            **kwargs,
-        )
-        # Add any SCARED-specific initialization here
-        
-class CHOLEC80_Dataset(RGBP_Dataset):
-    """
-    CHOLEC80 dataset implementation for polarization-guided RGB processing.
-    Inherits all functionality from the base RGBP_Dataset class.
-    This class can be extended with CHOLEC80-specific preprocessing,
-    polarization analysis, or RGB enhancement techniques.
-
-    The CHOLEC80 dataset combines RGB imagery with polarization measurements
-    for improved scene understanding and image enhancement tasks.
-    """
-
-    def __init__(self, **kwargs) -> None:
-        """
-        Initialize SCARED dataset.
-
-        Args:
-            **kwargs: All arguments passed to parent RGBP_Dataset class
-        """
-        super().__init__(
-            root_dir="$DATASET_DIR/CHOLEC80/videos/",
-            rgb_dir_name="frames",
-            rgb_ext=".png",
-            **kwargs,
-        )
-        # Add any SCARED-specific initialization here
-        
-class PSD_Dataset(RGBP_Dataset):
-    """
-    PSD dataset implementation for polarization-guided RGB processing.
-
-    Inherits all functionality from the base RGBP_Dataset class.
-    This class can be extended with PSD-specific preprocessing,
-    polarization analysis, or RGB enhancement techniques.
-
-    The PSD dataset combines RGB imagery with polarization measurements
-    for improved scene understanding and image enhancement tasks.
-    """
-
-    def __init__(self, **kwargs) -> None:
-        """
-        Initialize PSD dataset.
-
-        Args:
-            **kwargs: All arguments passed to parent RGBP_Dataset class
-        """
-        super().__init__(
-            root_dir="$DATASET_DIR/PSD_Dataset/",
-            rgb_ext=".png",
-            rgb_dir_name="specular",
-            diffuse_dir_name="diffuse",
-            **kwargs,
-        )
-        # Add any SYNTHETIC-specific initialization here
-
-
-class SYNTHETIC_Dataset(RGBP_Dataset):
-    """
-    SYNTHETIC dataset implementation for polarization-guided RGB processing.
-
-    Inherits all functionality from the base RGBP_Dataset class.
-    This class can be extended with SYNTHETIC-specific preprocessing,
-    polarization analysis, or RGB enhancement techniques.
-
-    The SYNTHETIC dataset combines RGB imagery with polarization measurements
-    for improved scene understanding and image enhancement tasks.
-    """
-
-    def __init__(self, **kwargs) -> None:
-        """
-        Initialize SYNTHETIC dataset.
-
-        Args:
-            **kwargs: All arguments passed to parent RGBP_Dataset class
-        """
-        super().__init__(
-            root_dir="$DATASET_DIR/SyntheticMitsuba/",
-            rgb_ext=".png",
-            pol_ext=".npy",
-            polarization_format="separate_files_stokes", 
-            **kwargs,
-        )
-        # Add any SYNTHETIC-specific initialization here

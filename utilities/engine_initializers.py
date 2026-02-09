@@ -17,7 +17,7 @@ import torchvision
 import optimization
 import wandb as weightsandbiases
 from logger import get_logger
-from models_utils import DictInputAdapter
+from models_utils import DataParallelWrapper
 
 logger = get_logger(__name__)
 
@@ -72,7 +72,7 @@ def dataloaders(dataset, config):
 def dimensions(training_dl, config):
     """Extract dimensions from the training data"""
     # Extract frame dimensions
-    
+
     input_shape = next(iter(training_dl))[
         "raw"
     ].shape  # [batch_size, channels, height, width]
@@ -164,12 +164,12 @@ def hyperparameters(config):
 
 def optimizers(model, config):
     """Initialize optimizers and related components
-    
+
     Each component must have an explicit learning rate specified:
     - RGB_ENCODER_LR: Learning rate for RGB encoder (DINOv3)
     - TOKEN_INPAINTER_LR: Learning rate for token inpainter
     - DECODER_LR: Learning rate for each decoder (specified per decoder)
-    
+
     If a component's LR is set to 0.0, that component will be frozen.
     If a component's LR is None, an error will be raised.
     """
@@ -177,18 +177,18 @@ def optimizers(model, config):
     logger.set_context("OPTIMIZATION")
     optimizer_class = getattr(optimization, config.get("OPTIMIZER_BOOTSTRAP_NAME"))
     weight_decay = config.get("WEIGHT_DECAY")
-    
+
     # Get learning rates directly from config (consistent access pattern)
     encoder_lr = config.MODEL.RGB_ENCODER.RGB_ENCODER_LR
     token_lr = config.MODEL.TOKEN_INPAINTER.TOKEN_INPAINTER_LR
-    
+
     # Get decoder-specific learning rates from config
     decoder_lrs = {}
     decoders_config = config.MODEL.DECODERS
     for decoder_name in decoders_config.keys():
         decoder_lr = decoders_config[decoder_name].DECODER_LR
         decoder_lrs[decoder_name] = decoder_lr
-    
+
     # Validate that all components have explicit learning rates
     missing_lrs = []
     if encoder_lr is None:
@@ -198,18 +198,20 @@ def optimizers(model, config):
     for decoder_name, decoder_lr in decoder_lrs.items():
         if decoder_lr is None:
             missing_lrs.append(f"DECODER_LR for '{decoder_name}'")
-    
+
     if missing_lrs:
         raise ValueError(
             f"All components must have explicit learning rates specified. "
             f"Missing learning rates for: {', '.join(missing_lrs)}. "
             f"Please set these in the config file. Use 0.0 to freeze a component."
         )
-    
+
     # Build param groups deterministically.
-    # Unwrap DataParallel and DictInputAdapter so parameter names match the real model (no "module." prefix).
-    effective_model = model.module if isinstance(model, torch.nn.DataParallel) else model
-    if isinstance(effective_model, DictInputAdapter):
+    # Unwrap DataParallel and DataParallelWrapper so parameter names match the real model (no "module." prefix).
+    effective_model = (
+        model.module if isinstance(model, torch.nn.DataParallel) else model
+    )
+    if isinstance(effective_model, DataParallelWrapper):
         effective_model = effective_model._modules.get("module", effective_model)
     encoder_params = []
     token_params = []
@@ -235,13 +237,15 @@ def optimizers(model, config):
                 raise ValueError(f"Unexpected decoder parameter name format: {name}")
         else:
             # Other parameters (shouldn't exist, but handle gracefully)
-            logger.warning(f"Parameter '{name}' does not belong to any recognized component. "
-                          f"It will not be included in optimizer parameter groups.")
+            logger.warning(
+                f"Parameter '{name}' does not belong to any recognized component. "
+                f"It will not be included in optimizer parameter groups."
+            )
 
     # Build parameter groups list with component names for tracking
     param_groups = []
     param_group_components = []  # Track which component each group belongs to
-    
+
     # Add encoder group if it has parameters and LR is not 0.0
     if len(encoder_params) > 0:
         if encoder_lr == 0.0:
@@ -250,14 +254,16 @@ def optimizers(model, config):
                 p.requires_grad = False
             # logger.info("RGB Encoder: FROZEN (RGB_ENCODER_LR=0.0)")
         else:
-            param_groups.append({
-                "params": encoder_params,
-                "lr": encoder_lr,
-                "weight_decay": weight_decay,
-            })
+            param_groups.append(
+                {
+                    "params": encoder_params,
+                    "lr": encoder_lr,
+                    "weight_decay": weight_decay,
+                }
+            )
             param_group_components.append("RGB Encoder")
             # logger.info(f"RGB Encoder: LR={encoder_lr:.2e}")
-    
+
     # Add token inpainter group if it has parameters and LR is not 0.0
     if len(token_params) > 0:
         if token_lr == 0.0:
@@ -266,14 +272,16 @@ def optimizers(model, config):
                 p.requires_grad = False
             # logger.info("Token Inpainter: FROZEN (TOKEN_INPAINTER_LR=0.0)")
         else:
-            param_groups.append({
-                "params": token_params,
-                "lr": token_lr,
-                "weight_decay": weight_decay,
-            })
+            param_groups.append(
+                {
+                    "params": token_params,
+                    "lr": token_lr,
+                    "weight_decay": weight_decay,
+                }
+            )
             param_group_components.append("Token Inpainter")
             # logger.info(f"Token Inpainter: LR={token_lr:.2e}")
-    
+
     # Add decoder groups with their specific learning rates
     for decoder_name, decoder_params in decoder_param_groups.items():
         if len(decoder_params) > 0:
@@ -284,37 +292,42 @@ def optimizers(model, config):
                     p.requires_grad = False
                 # logger.info(f"Decoder '{decoder_name}': FROZEN (DECODER_LR=0.0)")
             else:
-                param_groups.append({
-                    "params": decoder_params,
-                    "lr": decoder_lr,
-                    "weight_decay": weight_decay,
-                })
+                param_groups.append(
+                    {
+                        "params": decoder_params,
+                        "lr": decoder_lr,
+                        "weight_decay": weight_decay,
+                    }
+                )
                 param_group_components.append(f"Decoder '{decoder_name}'")
                 # logger.info(f"Decoder '{decoder_name}': LR={decoder_lr:.2e}")
-    
+
     # Create optimizer with parameter groups
     if len(param_groups) == 0:
         # All components are frozen - create optimizer with empty param groups
-        logger.warning("All components are frozen (LR=0.0). Optimizer will have no trainable parameters.")
-        optimizer = optimizer_class([], lr=1e-6, weight_decay=weight_decay)  # Dummy LR for empty optimizer
+        logger.warning(
+            "All components are frozen (LR=0.0). Optimizer will have no trainable parameters."
+        )
+        optimizer = optimizer_class(
+            [], lr=1e-6, weight_decay=weight_decay
+        )  # Dummy LR for empty optimizer
     else:
         optimizer = optimizer_class(param_groups)
 
     # Print learning rate summary after optimizer initialization
 
-    
     # RGB Encoder
     if encoder_lr == 0.0:
         logger.info("RGB Encoder : FROZEN (LR=0.0)")
     else:
         logger.info(f"RGB Encoder : LR={encoder_lr:.2e}")
-    
+
     # Token Inpainter
     if token_lr == 0.0:
         logger.info("Token Inpainter : FROZEN (LR=0.0)")
     else:
         logger.info(f"Token Inpainter : LR={token_lr:.2e}")
-    
+
     # Decoders
     for decoder_name in sorted(decoder_lrs.keys()):
         decoder_lr = decoder_lrs[decoder_name]
@@ -322,13 +335,17 @@ def optimizers(model, config):
             logger.info(f"Decoder '{decoder_name}': FROZEN (LR=0.0)")
         else:
             logger.info(f"Decoder '{decoder_name}': LR={decoder_lr:.2e}")
-    
+
     # Verify optimizer parameter groups match
     logger.info(f"Optimizer parameter groups: {len(optimizer.param_groups)}")
     for i, group in enumerate(optimizer.param_groups):
-        num_params = sum(p.numel() for p in group['params'])
-        component_name = param_group_components[i] if i < len(param_group_components) else "Unknown"
-        logger.info(f"Group {i} ({component_name}): LR={group['lr']:.2e}, Params={num_params:,}, Weight Decay={group.get('weight_decay', 0.0)}")
+        num_params = sum(p.numel() for p in group["params"])
+        component_name = (
+            param_group_components[i] if i < len(param_group_components) else "Unknown"
+        )
+        logger.info(
+            f"Group {i} ({component_name}): LR={group['lr']:.2e}, Params={num_params:,}, Weight Decay={group.get('weight_decay', 0.0)}"
+        )
 
     # Gradient scaler for mixed precision
     scaler = torch.amp.GradScaler(
@@ -370,7 +387,9 @@ def schedulers(optimizer, config, training_dl):
         cosine_scheduler = scheduler_config.get("COSINE")
         batches_per_epoch = len(training_dl)  # int: number of batches per epoch
         n_epochs = config.get("EPOCHS")  # int: number of epochs
-        n_periods = cosine_scheduler.get("N_PERIODS", 0.5)  # int: number of cosine peaks
+        n_periods = cosine_scheduler.get(
+            "N_PERIODS", 0.5
+        )  # int: number of cosine peaks
         T_max = (
             n_epochs * batches_per_epoch
         ) // n_periods // 2 - 1  # int: steps per peak
@@ -453,7 +472,9 @@ def wandb(config, model=None, notes="", no_wandb=False, resume_wandb_run_id=None
                 run_id = runs[0].id
                 logger.info("Found run to resume:", run_id)
             else:
-                logger.warning(f"WandB run with display_name '{config['RUN']}' not found")
+                logger.warning(
+                    f"WandB run with display_name '{config['RUN']}' not found"
+                )
                 resume_run = None
         except Exception as e:
             logger.warning(f"Failed to query WandB for RUN '{config['RUN']}': {e}")

@@ -7,10 +7,6 @@ from typing import Optional, Union
 
 from os import PathLike
 
-if False:
-    from torch import Tensor
-
-
 def inference(
     input: Union[str, PathLike, Path, "Tensor"],
     output: Optional[Union[str, PathLike, Path]] = None,
@@ -51,7 +47,7 @@ def inference(
 
     from inference import InferenceOptions, run_inference as _run_inference_files
 
-    from unreflectanything._shared import (
+    from _shared import (
         DEFAULT_WEIGHTS_FILENAME,
         get_cache_dir,
         _resolve_device,
@@ -76,6 +72,7 @@ def inference(
 
     if output is None:
         import tempfile
+
         with tempfile.TemporaryDirectory() as tmpdir:
             output_path = Path(tmpdir)
             return _inference_files_return_tensors(
@@ -134,7 +131,7 @@ def _inference_tensor(
     import torch
     from inference import InferenceOptions, load_model
 
-    from unreflectanything._shared import (
+    from _shared import (
         DEFAULT_WEIGHTS_FILENAME,
         get_cache_dir,
         _resolve_device,
@@ -142,9 +139,13 @@ def _inference_tensor(
     )
 
     if input_tensor.dim() != 4:
-        raise ValueError(f"Input tensor must be 4D [B,C,H,W], got {input_tensor.dim()}D")
+        raise ValueError(
+            f"Input tensor must be 4D [B,C,H,W], got {input_tensor.dim()}D"
+        )
     if input_tensor.shape[1] != 3:
-        raise ValueError(f"Input tensor must have 3 channels, got {input_tensor.shape[1]}")
+        raise ValueError(
+            f"Input tensor must have 3 channels, got {input_tensor.shape[1]}"
+        )
 
     if weights_path is None:
         resolved_weights = get_cache_dir("weights") / DEFAULT_WEIGHTS_FILENAME
@@ -202,7 +203,7 @@ def _inference_files_return_tensors(
 
     from inference import InferenceOptions, list_image_paths, load_model
 
-    from unreflectanything._shared import (
+    from _shared import (
         DEFAULT_WEIGHTS_FILENAME,
         get_cache_dir,
         _resolve_device,
@@ -270,3 +271,128 @@ def _inference_files_return_tensors(
         results.append(diffuse.clamp(0.0, 1.0).cpu())
 
     return torch.cat(results, dim=0)
+
+def parse_cli():
+    """Parse command line arguments and YAML file into inference options."""
+    import yaml
+    import argparse
+    from inference import InferenceOptions
+    parser = argparse.ArgumentParser(
+        description="Run UnReflectAnything diffuse inference"
+    )
+    parser.add_argument(
+        "--config",
+        "-c",
+        type=str,
+        default="./config_inference.yaml",
+        required=False,
+        help="Absolute path to the inference YAML options file (default: ./config_inference.yaml)",
+    )
+
+    args = parser.parse_args()
+    config_path = Path(args.config).expanduser().resolve()
+    if not config_path.exists():
+        raise FileNotFoundError(f"Config file not found: {config_path}")
+
+    print(f"Loading inference configuration from '{config_path}'")
+
+    with config_path.open("r", encoding="utf-8") as handle:
+        raw_options = yaml.safe_load(handle)
+
+    def _as_path(value: Optional[str]) -> Optional[Path]:
+        return None if value is None else Path(value).expanduser().resolve()
+
+    raw_weights = raw_options.get("weights_path")
+    weights_path = _as_path(raw_weights)
+    # Default to cache dir (same as download-weights) when omitted or set to "default"
+    if weights_path is None or (
+        isinstance(raw_weights, str) and str(raw_weights).strip().lower() == "default"
+    ):
+        try:
+            from _shared import (
+                DEFAULT_WEIGHTS_FILENAME,
+                get_cache_dir,
+            )
+
+            weights_path = get_cache_dir("weights") / DEFAULT_WEIGHTS_FILENAME
+        except ImportError:
+            weights_path = None
+    input_dir = _as_path(raw_options.get("input_dir"))
+    output_dir = _as_path(raw_options.get("output_dir"))
+
+    if weights_path is None or not weights_path.exists():
+        cache_dir = None
+        try:
+            from _shared import get_cache_dir
+
+            cache_dir = get_cache_dir("weights")
+        except ImportError:
+            pass
+        hint = (
+            " Run 'unreflectanything download-weights' first, or set weights_path in the config."
+            if cache_dir
+            else ""
+        )
+        raise FileNotFoundError(
+            f"weights_path must point to an existing checkpoint file.{hint}"
+        )
+    if input_dir is None or not input_dir.exists():
+        raise FileNotFoundError("input_dir must point to an existing directory")
+    if output_dir is None:
+        raise ValueError("output_dir must be provided")
+
+    output_dir.mkdir(parents=True, exist_ok=True)
+    print(    "✔️  Configuration loaded",  )
+
+    batch_size = int(raw_options.get("batch_size", 4))
+    if batch_size <= 0:
+        raise ValueError("batch_size must be positive")
+
+    image_extensions = raw_options.get("image_extensions")
+    if image_extensions is None:
+        extensions = (
+            ".png",
+            ".jpg",
+            ".jpeg",
+            ".bmp",
+            ".tif",
+            ".tiff",
+            ".webp",
+        )
+    else:
+        extensions = tuple(ext.lower() for ext in image_extensions)
+
+    resize_output = raw_options.get("resize_output", True)
+    if not isinstance(resize_output, bool):
+        raise ValueError("resize_output must be a boolean")
+
+    brightness_threshold = float(raw_options.get("brightness_threshold", 0.7))
+    if not (0.0 <= brightness_threshold <= 1.0):
+        raise ValueError("brightness_threshold must be between 0.0 and 1.0")
+
+    monitor_usage = raw_options.get("monitor_usage", False)
+    if not isinstance(monitor_usage, bool):
+        raise ValueError("monitor_usage must be a boolean")
+
+    num_workers = int(raw_options.get("num_workers", 4))
+    if num_workers < 0:
+        raise ValueError("num_workers must be non-negative")
+
+    options = InferenceOptions(
+        weights_path=weights_path,
+        input_dir=input_dir,
+        output_dir=output_dir,
+        inpaint_mask_dilation=int(raw_options.get("inpaint_mask_dilation", 11)),
+        run=raw_options.get("run"),
+        runs_dir=_as_path(raw_options.get("runs_dir")),
+        model_config_path=_as_path(raw_options.get("model_config_path")),
+        model_module=raw_options.get("model_module"),
+        batch_size=batch_size,
+        device=raw_options.get("device", "cuda"),
+        image_extensions=extensions,
+        resize_output=resize_output,
+        brightness_threshold=brightness_threshold,
+        monitor_usage=monitor_usage,
+        num_workers=num_workers,
+    )
+    return options
