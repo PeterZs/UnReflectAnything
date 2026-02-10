@@ -23,8 +23,14 @@ logger = get_logger(__name__)
 
 
 def device_and_directories(config):
-    """Initialize device and create necessary directories"""
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    """Initialize device and create necessary directories. Branch on config.DISTRIBUTE."""
+    distribute = config.get("DISTRIBUTE", "singlegpu")
+    if distribute == "ddp":
+        device = torch.device(f"cuda:{config.LOCAL_RANK}")
+    elif distribute == "dp" and torch.cuda.is_available() and torch.cuda.device_count() > 1:
+        device = torch.device("cuda:0")
+    else:
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     # Get runs directory from config, with fallback to default
     runs_dir = os.path.expandvars(
@@ -42,21 +48,64 @@ def device_and_directories(config):
 
 
 def dataloaders(dataset, config):
-    """Initialize datasets and dataloaders"""
-    # Store dataset references
-    training_ds = dataset["Training"]  # Training dataset
-    validation_ds = dataset["Validation"]  # Validation dataset
-    test_ds = dataset["Test"]  # Testing dataset
-    workers = dataset["workers"]  # Number of workers for data loading
+    """Initialize datasets and dataloaders. Use DistributedSampler when config.DISTRIBUTE == 'ddp'."""
+    from torch.utils.data.distributed import DistributedSampler
 
-    # Dataloaders only for initialization purposes (samplers will be modified)
+    training_ds = dataset["Training"]
+    validation_ds = dataset["Validation"]
+    test_ds = dataset["Test"]
+    workers = dataset["workers"]
+    batch_size = config["BATCH_SIZE"]
+    shuffle = config["SHUFFLE"]
+
+    distribute = config.get("DISTRIBUTE", "singlegpu")
+    if distribute == "ddp":
+        rank = config["RANK"]
+        world_size = config["WORLD_SIZE"]
+        training_sampler = DistributedSampler(
+            training_ds, num_replicas=world_size, rank=rank, shuffle=shuffle
+        )
+        validation_sampler = DistributedSampler(
+            validation_ds, num_replicas=world_size, rank=rank, shuffle=False
+        )
+        training_dl = torch.utils.data.DataLoader(
+            training_ds,
+            batch_size=batch_size,
+            sampler=training_sampler,
+            shuffle=False,
+            num_workers=config.get("NUM_WORKERS", 0),
+            pin_memory=config.get("PIN_MEMORY", False),
+            drop_last=True,
+            prefetch_factor=config.get("PREFETCH_FACTOR", 2) if config.get("NUM_WORKERS", 0) > 0 else None,
+        )
+        validation_dl = torch.utils.data.DataLoader(
+            validation_ds,
+            batch_size=batch_size,
+            sampler=validation_sampler,
+            shuffle=False,
+            num_workers=config.get("NUM_WORKERS", 0),
+            pin_memory=config.get("PIN_MEMORY", False),
+            drop_last=True,
+            prefetch_factor=config.get("PREFETCH_FACTOR", 2) if config.get("NUM_WORKERS", 0) > 0 else None,
+        )
+        return {
+            "dataset": {
+                "Training": training_ds,
+                "Validation": validation_ds,
+                "Test": test_ds,
+            },
+            "workers": workers,
+            "training_dl": training_dl,
+            "validation_dl": validation_dl,
+            "training_sampler": training_sampler,
+        }
+    # singlegpu or dp
     training_dl = torch.utils.data.DataLoader(
-        training_ds, batch_size=config["BATCH_SIZE"], shuffle=config["SHUFFLE"]
+        training_ds, batch_size=batch_size, shuffle=shuffle
     )
     validation_dl = torch.utils.data.DataLoader(
-        validation_ds, batch_size=config["BATCH_SIZE"], shuffle=config["SHUFFLE"]
+        validation_ds, batch_size=batch_size, shuffle=shuffle
     )
-
     return {
         "dataset": {
             "Training": training_ds,
@@ -66,6 +115,7 @@ def dataloaders(dataset, config):
         "workers": workers,
         "training_dl": training_dl,
         "validation_dl": validation_dl,
+        "training_sampler": None,
     }
 
 
@@ -188,7 +238,6 @@ def optimizers(model, config):
     for decoder_name in decoders_config.keys():
         decoder_lr = decoders_config[decoder_name].DECODER_LR
         decoder_lrs[decoder_name] = decoder_lr
-
     # Validate that all components have explicit learning rates
     missing_lrs = []
     if encoder_lr is None:
@@ -207,10 +256,10 @@ def optimizers(model, config):
         )
 
     # Build param groups deterministically.
-    # Unwrap DataParallel and DataParallelWrapper so parameter names match the real model (no "module." prefix).
-    effective_model = (
-        model.module if isinstance(model, torch.nn.DataParallel) else model
-    )
+    # Unwrap DataParallel, DDP, and DataParallelWrapper so parameter names match the real model (no "module." prefix).
+    effective_model = model
+    if isinstance(model, (torch.nn.DataParallel, torch.nn.parallel.DistributedDataParallel)):
+        effective_model = model.module
     if isinstance(effective_model, DataParallelWrapper):
         effective_model = effective_model._modules.get("module", effective_model)
     encoder_params = []
@@ -425,8 +474,16 @@ def transforms(height, width):
 
 
 def wandb(config, model=None, notes="", no_wandb=False, resume_wandb_run_id=None):
-    """Initialize Weights & Biases tracking"""
+    """
+    Initialize Weights & Biases tracking.
+
+    DDP invariant: wandb must only be initialized on rank 0. Non-zero ranks receive
+    {"wandb": None, "testtable": None}. All callers (Engine init, _reinitialize_wandb)
+    use this same function so the invariant holds.
+    """
     if no_wandb:
+        return {"wandb": None, "testtable": None}
+    if config.get("DISTRIBUTE") == "ddp" and config.get("RANK", 0) != 0:
         return {"wandb": None, "testtable": None}
 
     # Find existing run if specified

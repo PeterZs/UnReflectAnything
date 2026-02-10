@@ -35,6 +35,7 @@ from .wrappers import (
     CHOLEC80_Dataset,
     CROMO_Dataset,
     PSD_Dataset,
+    SUNRGBD_Dataset,
 )
 from .utils import (
     adapt_intrinsics_two_step,
@@ -56,6 +57,7 @@ __all__ = [
     "CHOLEC80_Dataset",
     "CROMO_Dataset",
     "PSD_Dataset",
+    "SUNRGBD_Dataset",
     # Utility functions
     "adapt_intrinsics_two_step",
     "split_videos",

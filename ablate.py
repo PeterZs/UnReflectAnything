@@ -1,3 +1,4 @@
+"""Ablation sweeps: single-process launcher (wandb.agent). Not used with DDP."""
 import os
 import argparse
 import yaml

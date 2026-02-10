@@ -117,7 +117,8 @@ class DINOv3(nn.Module):
         patch_tokens = hidden_states[:, 5:]  # [B, N_patches, feature_dim]
 
         # Reshape to spatial format
-        patch_tokens = patch_tokens.transpose(1, 2)  # [B, feature_dim, N_patches]
+        # Ensure contiguous layout after transpose for safe view/grad layout under DDP
+        patch_tokens = patch_tokens.transpose(1, 2).contiguous()  # [B, feature_dim, N_patches]
         feature_maps = patch_tokens.view(batch_size, self.feature_dim, patch_h, patch_w)
 
         return feature_maps
@@ -321,8 +322,9 @@ class DPTReassembleLayer(nn.Module):
         batch_size = hidden_state.shape[0]
 
         # Reshape to spatial format
-        patch_tokens = hidden_state.transpose(1, 2)  # [B, feature_dim, patch_h*patch_w]
-        patch_tokens = patch_tokens.reshape(
+        # Make tensor contiguous after transpose so the 4D view has standard strides
+        patch_tokens = hidden_state.transpose(1, 2).contiguous()  # [B, feature_dim, patch_h*patch_w]
+        patch_tokens = patch_tokens.view(
             batch_size, self.in_channels, patch_h, patch_w
         )  # [B, feature_dim, patch_h, patch_w]
 
@@ -1040,20 +1042,29 @@ class UnReflect_Model(nn.Module):
         Wp = self.image_size // self.patch_size
         return tokens, (Hp, Wp)
 
-    def forward(self, model_input_dict):
-        # 1) RGB → DINO tokens/features
+        
+    def forward(self, model_input_dict, just_extract_tokens=False):
+        if isinstance(model_input_dict, torch.Tensor):
+            model_input_dict = {"rgb": model_input_dict}
+            model_input_dict["inpaint_mask_dilation"] = 5
 
-        rgb_in = self.dinov3.preprocess_image(model_input_dict["rgb"])
-        dinov3_output = self.dinov3(rgb_in)
-        rgb_features = dinov3_output["selected_hidden_states"]
-
+        elif isinstance(model_input_dict, dict):
+            if "inpaint_mask_dilation" not in model_input_dict:
+                model_input_dict["inpaint_mask_dilation"] = 5
+        x = model_input_dict["rgb"]  # (B,3,H,W)
+        rgb_in = self.dinov3.preprocess_image(x)
+        tokens_list = self.dinov3(rgb_in)[
+            "selected_hidden_states"
+        ]  # List[4] of (B,N,C), PATCH TOKENS ONLY
+        if just_extract_tokens:
+            return tokens_list
         # For ConvNeXt, ensure features are spatial feature maps [B, C, H, W]
         # For regular DINOv3, they are tokens [B, N, C]
         if self.use_convnext:
             # ConvNeXt outputs might be tokens, convert to spatial if needed
             # But if return_as_feature_maps=True, they should already be spatial
             # Check first feature to determine format
-            if len(rgb_features[0].shape) == 3:
+            if len(tokens_list[0].shape) == 3:
                 # It's tokens [B, N, C], but ConvNext decoder expects spatial
                 # This shouldn't happen if config is correct, but handle gracefully
                 logger.warning(
@@ -1064,7 +1075,7 @@ class UnReflect_Model(nn.Module):
         # 6) Decode with flexible decoder heads
         outputs = {}
         for decoder_name in self.decoder_names:
-            decoder_output = self.decoders[decoder_name](rgb_features)
+            decoder_output = self.decoders[decoder_name](tokens_list)
             outputs[decoder_name] = decoder_output
 
         # Optional: Add tokens for debugging/analysis

@@ -228,3 +228,30 @@ class PSD_Dataset(UnReflectAnything_Dataset):
             diffuse_dir_name="diffuse",
             **kwargs,
         )
+
+class SUNRGBD_Dataset(UnReflectAnything_Dataset):
+    """
+    SUNRGBD dataset implementation for polarization-guided RGB processing.
+
+    Inherits all functionality from the base UnReflectAnything_Dataset class.
+    This class can be extended with SUNRGBD-specific preprocessing,
+    polarization analysis, or RGB enhancement techniques.
+
+    The SUNRGBD dataset combines RGB imagery with polarization measurements
+    for improved scene understanding and image enhancement tasks.
+    """
+
+    def __init__(self, **kwargs) -> None:
+        """
+        Initialize SUNRGBD dataset.
+
+        Args:
+            **kwargs: All arguments passed to parent UnReflectAnything_Dataset class
+        """
+        super().__init__(
+            root_dir="$DATASET_DIR/SUNRGBD/",
+            rgb_dir_name="frames",
+            rgb_ext=".jpg",
+            **kwargs,
+        )
+        # Add any SUNRGBD-specific initialization here

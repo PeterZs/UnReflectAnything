@@ -13,12 +13,38 @@ import json
 
 logger = get_logger(__name__).set_context("CONFIG")
 
+# Allowed values for DISTRIBUTE (training distribution mode)
+DISTRIBUTE_SINGLEGPU = "singlegpu"
+DISTRIBUTE_DP = "dp"
+DISTRIBUTE_DDP = "ddp"
+
+
+def resolve_distribute(config: DotMap) -> None:
+    """
+    Resolve and normalize config.DISTRIBUTE from config.
+    Mutates config so that config.get("DISTRIBUTE", "singlegpu") is always one of
+    "singlegpu", "dp", "ddp".
+    """
+    distribute_entry = config.get("DISTRIBUTE", "singlegpu")
+    if distribute_entry == "singlegpu" and torch.cuda.device_count() > 1:
+        logger.warning(
+            f"DISTRIBUTE is 'singlegpu' even though multiple GPUs are available"
+        )
+
+    if distribute_entry is not None:
+        normalized = str(distribute_entry).strip().lower()
+        if normalized not in (DISTRIBUTE_SINGLEGPU, DISTRIBUTE_DP, DISTRIBUTE_DDP):
+            raise ValueError(
+                f"DISTRIBUTE must be one of 'singlegpu', 'DP', 'DDP'; got {distribute_entry!r}"
+            )
+        config["DISTRIBUTE"] = normalized
+        
+    return config
 
 def create_model_from_config(
     config: DotMap,
     device: torch.device,
     verbose: bool = True,
-    use_data_parallel: Optional[bool] = None,
 ):
     """
     Create the RGBPOLDecomposer model from configuration.
@@ -31,12 +57,9 @@ def create_model_from_config(
         config (DotMap): Configuration dictionary containing model parameters including:
             - MODEL: Model architecture configuration
             - DATASETS: Dataset configurations for extracting target image size
-            - USE_DATAPARALLEL: If True, skip torch.compile and use primary GPU (for nn.DataParallel wrapping).
-            - USE_TORCH_COMPILE: If True, compile the model (ignored when USE_DATAPARALLEL is True).
+            - USE_TORCH_COMPILE: If True, compile the model (ignored when DATAPARALLEL).
         device (torch.device): PyTorch device to place the model on (e.g., 'cuda' or 'cpu')
         verbose: If True, print/log progress information. Defaults to True.
-        use_data_parallel: Override config USE_DATAPARALLEL. If None, read from config. When True,
-            torch.compile is skipped and device is forced to cuda:0 when multiple GPUs are available.
 
     Returns:
         RGBPOLDecomposer: The initialized model ready for training or inference
@@ -45,22 +68,20 @@ def create_model_from_config(
         The model expects input tensors of shape [B×3×H×W] for RGB images and 
         [B×3×H×W] for polarization images, where B is batch size, H and W are \
         height and width respectively.
-        For DataParallel: set USE_DATAPARALLEL=True in config (or use_data_parallel=True), then wrap
-        the returned model with nn.DataParallel(model). torch.compile is incompatible with DataParallel.
     """
-    # Resolve DataParallel mode: explicit arg overrides config
-    dp_mode = (
-        use_data_parallel
-        if use_data_parallel is not None
-        else config.get("USE_DATAPARALLEL", False)
-    )
-    if dp_mode and device.type == "cuda" and torch.cuda.device_count() > 1:
+    # Device by DISTRIBUTE: DDP keeps per-rank device (set by main); DP uses cuda:0 when multi-GPU
+    distribute = config.get("DISTRIBUTE", DISTRIBUTE_SINGLEGPU)
+    if distribute == DISTRIBUTE_DDP:
+        # main.py sets device to cuda:local_rank; do not override
+        pass
+    elif distribute == DISTRIBUTE_DP and device.type == "cuda" and torch.cuda.device_count() > 1:
         device = torch.device("cuda:0")
         if verbose:
             logger.info(
                 "DataParallel mode: using primary device cuda:0 and skipping torch.compile",
                 context="MODEL",
             )
+    # singlegpu: use provided device as-is
     # Access model configuration from the nested structure
     model_config = config.get("MODEL", {})  # .get("value", {})
 
@@ -238,7 +259,8 @@ def create_model_from_config(
 
     model = model_class(**model_kwargs).to(device)
     # torch.compile is incompatible with nn.DataParallel; skip when using DataParallel
-    should_compile = config.get("USE_TORCH_COMPILE", True) and not dp_mode
+    dp_or_ddp = distribute in (DISTRIBUTE_DP, DISTRIBUTE_DDP)
+    should_compile = config.get("USE_TORCH_COMPILE", True) and not dp_or_ddp
     if should_compile:
         start_time = time.time()
         model = torch.compile(
@@ -265,18 +287,25 @@ def create_model_from_config(
     return model
 
 
-def maybe_wrap_data_parallel(model: torch.nn.Module, config: DotMap):
+def wrap_model_for_parallelization(model: torch.nn.Module, config: DotMap):
     """
-    When config.USE_DATAPARALLEL is True and CUDA is available: wrap model in DataParallelWrapper
-    (so forward receives scatterable args). When multiple GPUs are available, wrap in nn.DataParallel.
-    No-op otherwise.
+    When config.DISTRIBUTE == "dp" and CUDA is available: wrap model in DataParallelWrapper
+    (so forward receives scatterable args) and nn.DataParallel when multiple GPUs.
+    When DISTRIBUTE == "ddp", return model unchanged (main wraps with DDP).
+    When DISTRIBUTE == "singlegpu", return model unchanged.
     """
-    if not config.get("USE_DATAPARALLEL", False) or not torch.cuda.is_available():
+    if config.get("DISTRIBUTE") == DISTRIBUTE_DDP:
+        return torch.nn.parallel.DistributedDataParallel(
+            model, device_ids=[config.get("LOCAL_RANK")]
+        )
+    if config.get("DISTRIBUTE") == DISTRIBUTE_DP:
+        model = DataParallelWrapper(model)
+        if torch.cuda.device_count() > 1:
+            model = torch.nn.DataParallel(model)
         return model
-    model = DataParallelWrapper(model)
-    if torch.cuda.device_count() > 1:
-        model = torch.nn.DataParallel(model)
-    return model
+    if config.get("DISTRIBUTE") == DISTRIBUTE_SINGLEGPU or not torch.cuda.is_available(): # CPU Only or single gpu
+        return model
+    
 
 
 def create_datasets_from_config(
@@ -313,6 +342,7 @@ def create_datasets_from_config(
         CHOLEC80_Dataset,
         CROMO_Dataset,
         PSD_Dataset,
+        SUNRGBD_Dataset,
     )
 
     try:
@@ -341,6 +371,7 @@ def create_datasets_from_config(
             "CHOLEC80": CHOLEC80_Dataset,
             "CROMO": CROMO_Dataset,
             "PSD": PSD_Dataset,
+            "SUNRGBD": SUNRGBD_Dataset,
         }
 
         global_train_scenes = global_config.get("TRAIN_SCENES", {}).get("value")
@@ -629,6 +660,13 @@ def load_and_process_config(
     # Convert the configuration dictionary to a DotMap for easy access
     config = DotMap(config_dict)
 
+    # Override FEW_IMAGES for all datasets if FEW_IMAGES_OVERRIDE is True
+    if getattr(config, "FEW_IMAGES_OVERRIDE", False):
+        for dataset_name, dataset_config in config.DATASETS.items():
+            if isinstance(dataset_config, dict):
+                dataset_config["FEW_IMAGES"] = True
+        logger.info("FEW_IMAGES_OVERRIDE enabled - loading few images for all datasets")
+
     # Override parameters if boot mode is enabled
     if boot_mode:
         config.BATCH_SIZE = 1
@@ -641,4 +679,5 @@ def load_and_process_config(
                 dataset_config["FEW_IMAGES"] = True
         logger.info("Boot mode enabled - using minimal parameters for quick testing")
 
+    config = resolve_distribute(config)
     return config

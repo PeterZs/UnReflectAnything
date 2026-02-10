@@ -71,7 +71,7 @@ def titlescreen() -> None:
     Prints the title screen from a text file.
     """
     with open("assets/project_ascii_banner.txt", "r") as f:
-        print(f"[white]{f.read()}[/white]")
+        return f"[white]{f.read()}[/white]"
 
 
 def check_rerun_output(func, *args, **kwargs):

@@ -9,6 +9,26 @@ from rich.logging import RichHandler
 from rich.theme import Theme
 
 
+def _get_rank():
+    """
+    Return the current process rank when running under torch.distributed (DDP), else None.
+    Safe to call before or when torch.distributed is not initialized.
+    """
+    try:
+        import torch.distributed as dist
+        if not dist.is_available() or not dist.is_initialized():
+            return None
+        return dist.get_rank()
+    except Exception:
+        return None
+
+
+def _is_main_process():
+    """True if this process is rank 0 or not in a DDP context (single process)."""
+    rank = _get_rank()
+    return rank is None or rank == 0
+
+
 def align(input_str, max_length, alignment):
     """
     Align a string to a specified length with the given alignment.
@@ -121,20 +141,26 @@ class CustomFormatter(logging.Formatter):
 class CustomLogger:
     """
     Custom logger class that handles both console and file logging with rich formatting.
+    When running under DDP, console output is limited to rank 0 by default; all ranks
+    may still write to their log files. Optionally, rank can be annotated in messages.
     """
 
-    def __init__(self, name, log_file=None):
+    def __init__(self, name, log_file=None, log_all_ranks=False, annotate_rank=False):
         """
         Initialize the logger with the given name and optional log file.
 
         Args:
             name (str): Name of the logger (typically module name)
             log_file (str, optional): Path to the log file. If None, no file logging is performed.
+            log_all_ranks (bool): If True, all DDP ranks log to console; if False, only rank 0.
+            annotate_rank (bool): If True, prefix context with rank tag (e.g. R0) when in DDP.
         """
         self.logger = logging.getLogger(name)
         self.logger.setLevel(logging.DEBUG)
         self.name = name
         self.default_context = LogContext.INFO  # Default context
+        self.log_all_ranks = log_all_ranks
+        self.annotate_rank = annotate_rank
 
         # Rich console for terminal output
         self.console = Console(theme=CUSTOM_THEME)
@@ -143,12 +169,16 @@ class CustomLogger:
         if self.logger.hasHandlers():
             self.logger.handlers.clear()
 
-        # Set up rich console handler with a custom format that doesn't show the log level
+        # Set up rich console handler: only emit to console on rank 0 (unless log_all_ranks)
+        parent_logger = self
+
         class CustomRichHandler(RichHandler):
             def emit(self, record):
-                # Skip the usual formatting and just use our custom message
+                rank = _get_rank()
+                if rank is not None and rank != 0 and not parent_logger.log_all_ranks:
+                    return
                 record.message = record.getMessage()
-                self.console.print(record.message)
+                parent_logger.console.print(record.message)
 
         # Create our custom handler
         rich_handler = CustomRichHandler(
@@ -222,8 +252,19 @@ class CustomLogger:
         # Use provided style or default to context name
         context_style = style if style else default_style
 
+        # Optional DDP rank annotation in context
+        rank = _get_rank()
+        display_context = context_name
+        file_context = context_name
+        ctx_width = 8
+        if self.annotate_rank and rank is not None:
+            rank_tag = f"R{rank}"
+            display_context = f"{rank_tag} {context_name}"
+            file_context = f"{rank_tag} {context_name}"
+            ctx_width = 14  # fit e.g. "R0 TRAINING"
+
         # Format for rich console output - context first, then time
-        rich_message = f"[{context_style}]{align(context_name, 8, 'left')}[/{context_style}] [{time_str}] {message}"
+        rich_message = f"[{context_style}]{align(display_context, ctx_width, 'left')}[/{context_style}] [{time_str}] {message}"
 
         # Append the end string (like print's end parameter)
         if end != "\n":
@@ -231,7 +272,7 @@ class CustomLogger:
 
         # Pass context as an extra parameter for file logging
         extra = kwargs.get("extra", {})
-        extra["context"] = context_name
+        extra["context"] = file_context
         kwargs["extra"] = extra
 
         # Log with the specified level
@@ -298,12 +339,10 @@ class CustomLogger:
     def print(self, *args, style=None, **kwargs):
         """
         Direct access to rich console's print functionality for advanced formatting.
-
-        Args:
-            *args: Arguments to print
-            style: Style to apply to the printed content
-            **kwargs: Additional kwargs for rich Console.print()
+        Under DDP, only rank 0 prints to console unless log_all_ranks is True.
         """
+        if not self.log_all_ranks and not _is_main_process():
+            return
         time_str = datetime.now().strftime("%H:%M:%S")
         prefix = f"[{time_str}] "
 
@@ -320,7 +359,7 @@ class CustomLogger:
 _loggers = {}
 
 
-def get_logger(module_name, log_to_file=True, relative_log_dir=""):
+def get_logger(module_name, log_to_file=True, relative_log_dir="", log_all_ranks=None, annotate_rank=None):
     """
     Get or create a logger for the specified module.
 
@@ -328,6 +367,8 @@ def get_logger(module_name, log_to_file=True, relative_log_dir=""):
         module_name (str): Name of the module
         log_to_file (bool): Whether to log to a file in addition to console
         relative_log_dir (str, optional): Directory for log files if log_to_file is True; may contain environment-style $VARS
+        log_all_ranks (bool, optional): If True, all DDP ranks log to console. Defaults to env DDP_LOG_ALL_RANKS=1 or False.
+        annotate_rank (bool, optional): If True, prefix context with rank (e.g. R0). Defaults to env DDP_LOG_ANNOTATE_RANK=1 or False.
 
     Returns:
         CustomLogger: The logger instance
@@ -342,6 +383,11 @@ def get_logger(module_name, log_to_file=True, relative_log_dir=""):
     if module_name in _loggers:
         return _loggers[module_name]
 
+    if log_all_ranks is None:
+        log_all_ranks = os.environ.get("DDP_LOG_ALL_RANKS", "0").strip().lower() in ("1", "true", "yes")
+    if annotate_rank is None:
+        annotate_rank = os.environ.get("DDP_LOG_ANNOTATE_RANK", "0").strip().lower() in ("1", "true", "yes")
+
     log_file = None
     if log_to_file:
         # Ensure log directory exists (after expansion)
@@ -349,10 +395,13 @@ def get_logger(module_name, log_to_file=True, relative_log_dir=""):
 
         log_file = os.path.join(log_dir, f"{module_name.split('.')[-1]}.log")
 
-        # Remove existing log file if it exists, to start fresh
-        if os.path.exists(log_file):
-            os.remove(log_file)
+        # Remove existing log file if it exists, to start fresh (ignore FileNotFoundError under DDP race)
+        try:
+            if os.path.exists(log_file):
+                os.remove(log_file)
+        except FileNotFoundError:
+            pass
 
-    logger = CustomLogger(module_name, log_file)
+    logger = CustomLogger(module_name, log_file, log_all_ranks=log_all_ranks, annotate_rank=annotate_rank)
     _loggers[module_name] = logger
     return logger

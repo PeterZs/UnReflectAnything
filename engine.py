@@ -8,6 +8,7 @@ import numpy as np
 import pandas as pd
 import torch
 import torch.nn as nn
+import torch.distributed as dist
 import math
 
 import optimization
@@ -37,6 +38,8 @@ class Engine:
         resume_run_id: str = None,
         resume_info: Optional[dict] = None,
         will_resume: bool = False,
+        rank: Optional[int] = None,
+        world_size: Optional[int] = None,
         **kwargs,
     ):
         """
@@ -71,6 +74,13 @@ class Engine:
         # Mark if this Engine is expected to resume from an existing run
         # This must be set before any directory setup happens
         self._will_resume = bool(will_resume)
+        # DDP: only set when config.DISTRIBUTE == "ddp"
+        self._rank = rank
+        self._world_size = world_size
+        self._is_ddp = (
+            world_size is not None and world_size > 1
+        )
+        self._distribute = config.get("DISTRIBUTE", "singlegpu")
 
         # Initialize device and directories
         device_dirs = initialize.device_and_directories(config)
@@ -86,7 +96,6 @@ class Engine:
 
         # Initialize the models
         self.model = model
-
         # Initialize all components using engine_initializers
         init(initialize.dataloaders, dataset, config)
         # for i in range(len(dataset["Training"])):
@@ -96,7 +105,7 @@ class Engine:
         init(initialize.optimizers, self.model, config)
         init(initialize.schedulers, self.optimizer, config, self.training_dl)
         init(initialize.transforms, self.height, self.width)
-        # Check if we need to resume wandb run
+        # Wandb: initialized only on rank 0 when DDP (see utilities.engine_initializers.wandb)
         resume_wandb_run_id = resume_run_id
         init(initialize.wandb, config, self.model, notes, no_wandb, resume_wandb_run_id)
         init(initialize.tracking_metrics)
@@ -104,7 +113,16 @@ class Engine:
         # Skip directory setup during initialization if we're going to resume
         # The directories will be set up during resume_from_run()
         if not self._will_resume:
-            init(initialize.setup_run_directories, self.RUNS_DIR, self.wandb, False)
+            if self._is_main_process() or not self._is_ddp:
+                init(initialize.setup_run_directories, self.RUNS_DIR, self.wandb, False)
+            if self._is_ddp:
+                runname_list = [getattr(self, "runname", None)]
+                dist.broadcast_object_list(runname_list, src=0)
+                self.runname = runname_list[0]
+                self.RUN_DIR = os.path.join(self.RUNS_DIR, self.runname)
+                self.MODELS_DIR = os.path.join(self.RUN_DIR, "models")
+                self.TEST_DIR = os.path.join(self.RUN_DIR, "tests")
+                self.paths_file = os.path.join(self.RUN_DIR, "loadeddata.csv")
             init(
                 initialize.earlystopping,
                 self.earlystopping_patience,
@@ -128,12 +146,12 @@ class Engine:
             self.device
         )
 
-        # Save hyperparameters to json only when not resuming
-        if not self._will_resume:
+        # Save hyperparameters to json only when not resuming (rank 0 only when DDP)
+        if not self._will_resume and self._is_main_process():
             initialize.save_hyperparameters_json(self.RUN_DIR, self.config)
 
-        # Once the run name is set, we move all the log files to the run directory
-        if not self._will_resume:
+        # Once the run name is set, we move all the log files to the run directory (rank 0 only when DDP)
+        if not self._will_resume and self._is_main_process():
             TEMPORARY_LOG_DIR = os.path.join(self.RUNS_DIR, "temporary")
             if os.path.exists(TEMPORARY_LOG_DIR):
                 for log_file in os.listdir(TEMPORARY_LOG_DIR):
@@ -145,7 +163,9 @@ class Engine:
 
         # Initialize polarization-specific losses
         self.logger = get_logger(
-            __name__, log_to_file=True, relative_log_dir=self.RUN_DIR
+            __name__,
+            log_to_file=self._is_main_process(),
+            relative_log_dir=self.RUN_DIR,
         )
         self.loss = UnReflectLoss(
             weight_specular_loss=self.config.SPECULAR_LOSS_WEIGHT,
@@ -181,7 +201,7 @@ class Engine:
             seam_use_charb=bool(self.config.get("SEAM_USE_CHARB", True)),
             seam_weight_grad=float(self.config.get("SEAM_WEIGHT_GRAD", 0.2)),
             # Token-space loss parameters
-            weight_token_inpaint=float(self.config.get("WEIGHT_TOKEN_INPAINT", 1.0)),
+            weight_token_inpaint=float(self.config.get("TOKEN_INPAINT_LOSS_WEIGHT", 1.0)),
             token_feat_alpha=float(self.config.get("TOKEN_FEAT_ALPHA", 0.5)),
             # Diffuse highlight penalty parameters
             weight_diffuse_highlight_penalty=float(
@@ -210,6 +230,19 @@ class Engine:
         self.memory_monitoring = config.get(
             "MEMORY_MONITORING", False
         )  # Log memory usage
+
+        # training_sampler is set by init(dataloaders) when DDP; otherwise None
+        self.training_sampler = getattr(self, "training_sampler", None)
+
+    def _is_main_process(self) -> bool:
+        """True if this process should log, save checkpoints, and run test."""
+        return self._rank is None or self._rank == 0
+
+    def _unwrap_model(self) -> nn.Module:
+        """Return the underlying model (strip DDP or DataParallel wrapper)."""
+        if self._distribute in ("dp", "ddp"):
+            return self.model.module
+        return self.model
 
     def composite_specular_diffuse(
         self, specular: torch.Tensor, diffuse: torch.Tensor
@@ -262,14 +295,21 @@ class Engine:
         # Determine starting epoch (for resume functionality)
         start_epoch = getattr(self, "start_epoch", 0)
 
+        if start_epoch > 0 and self._is_main_process():
+            self.logger.info(
+                f"Starting training loop from epoch index {start_epoch} (display: epoch {start_epoch + 1}/{self.epochs})",
+                context="TRAINING",
+            )
+
         for e in range(start_epoch, self.epochs):
             ### TRAINING + VALIDATION FOR EACH EPOCH
             self.train()  # Train the model for one epoch
             is_overfitting = self.validate()  # Train the model for one epoch
 
-            self.csv_log_metrics()  # Log the metrics to csv
+            if self._is_main_process():
+                self.csv_log_metrics()  # Log the metrics to csv
 
-            # Save checkpoint every few epochs
+            # Save checkpoint every few epochs (rank 0 only when DDP)
             if (e + 1) % self.config.get("SAVE_INTERVAL", 10) == 0:
                 self._save_checkpoint(e)
 
@@ -277,34 +317,35 @@ class Engine:
             if is_overfitting == "EARLYSTOP":
                 break  # Exit the training loop if early stopping condition is met
 
-        # Log locations of important data at the end of training
-        self.logger.info("TRAINING COMPLETE", context="SAVE")
-        self.logger.info(
-            f"Run directory: {os.path.abspath(self.RUN_DIR)}", context="SAVE"
-        )
-        self.logger.info(
-            f"Checkpoints  : {os.path.abspath(self.MODELS_DIR)}", context="SAVE"
-        )
-        self.logger.info("Metrics      :", context="SAVE")
-        self.logger.info(
-            f"Training     : {os.path.abspath(os.path.join(self.RUN_DIR, 'training_metrics.csv'))}",
-            context="SAVE",
-        )
-        self.logger.info(
-            f"Validation   : {os.path.abspath(os.path.join(self.RUN_DIR, 'validation_metrics.csv'))}",
-            context="SAVE",
-        )
+        # Log locations of important data at the end of training (rank 0 only when DDP)
+        if self._is_main_process():
+            self.logger.info("TRAINING COMPLETE", context="SAVE")
+            self.logger.info(
+                f"Run directory: {os.path.abspath(self.RUN_DIR)}", context="SAVE"
+            )
+            self.logger.info(
+                f"Checkpoints  : {os.path.abspath(self.MODELS_DIR)}", context="SAVE"
+            )
+            self.logger.info("Metrics      :", context="SAVE")
+            self.logger.info(
+                f"Training     : {os.path.abspath(os.path.join(self.RUN_DIR, 'training_metrics.csv'))}",
+                context="SAVE",
+            )
+            self.logger.info(
+                f"Validation   : {os.path.abspath(os.path.join(self.RUN_DIR, 'validation_metrics.csv'))}",
+                context="SAVE",
+            )
 
-        # Remove unused IMAGES_DIR if it exists and is empty
-        images_dir = os.path.join(self.RUN_DIR, "images")
-        if os.path.exists(images_dir) and not os.listdir(images_dir):
-            try:
-                os.rmdir(images_dir)
-                self.logger.info(
-                    f"Removed unused directory: {images_dir}", context="SAVE"
-                )
-            except OSError:
-                pass
+            # Remove unused IMAGES_DIR if it exists and is empty
+            images_dir = os.path.join(self.RUN_DIR, "images")
+            if os.path.exists(images_dir) and not os.listdir(images_dir):
+                try:
+                    os.rmdir(images_dir)
+                    self.logger.info(
+                        f"Removed unused directory: {images_dir}", context="SAVE"
+                    )
+                except OSError:
+                    pass
 
     def train(self):
         """Training phase for one epoch"""
@@ -318,19 +359,31 @@ class Engine:
         if result is not None:
             self.step["epoch"] += 1  # Increasing epoch counter
             self.LRschedulerPlateau.step(float(result))
-            self.earlystopping(
-                float(result),
-                self.model,
-                self.step["epoch"] - 1,
-                self.optimizer,
-                self.config,
-                self.wandb,
-            )
-            if self.earlystopping.early_stop:
-                self.logger.info(
-                    ">> [EARLYSTOPPING]: Patience Reached, Stopping Training",
-                    context="TRAINING",
+            if self._is_main_process():
+                self.earlystopping(
+                    float(result),
+                    self.model,
+                    self.step["epoch"] - 1,
+                    self.optimizer,
+                    self.config,
+                    self.wandb,
                 )
+            if self._is_ddp:
+                # Broadcast early_stop from rank 0 to all ranks
+                early_stop_tensor = torch.tensor(
+                    1 if (self._is_main_process() and self.earlystopping.early_stop) else 0,
+                    device=self.device,
+                    dtype=torch.int64,
+                )
+                dist.broadcast(early_stop_tensor, src=0)
+                if early_stop_tensor.item() != 0:
+                    self.earlystopping.early_stop = True
+            if self.earlystopping.early_stop:
+                if self._is_main_process():
+                    self.logger.info(
+                        ">> [EARLYSTOPPING]: Patience Reached, Stopping Training",
+                        context="TRAINING",
+                    )
                 return "EARLYSTOP"
             return "IMPROVED"
         return "CONTINUE"
@@ -671,24 +724,33 @@ class Engine:
             )
             return None
 
-        cpu_affinity = os.sched_getaffinity(os.getpid())
-        if self.config.get("NUM_WORKERS", "auto") == "auto":
-            NUM_WORKERS = int(math.floor(0.9 * len(list(cpu_affinity))))
+        # DDP: run Test phase only on rank 0
+        if phase == "Test" and self._is_ddp and not self._is_main_process():
+            return None
+
+        # When DDP, use stored training_dl/validation_dl and set_epoch for training
+        if self._is_ddp and phase in ("Training", "Validation"):
+            if phase == "Training" and self.training_sampler is not None:
+                self.training_sampler.set_epoch(self.step["epoch"])
+            dataloader = self.training_dl if phase == "Training" else self.validation_dl
         else:
-            NUM_WORKERS = self.config.NUM_WORKERS
-        NUM_WORKERS = int(math.floor(0.9 * len(list(cpu_affinity))))
-        # Create dataloader using the initialized parameters
-        dataloader = torch.utils.data.DataLoader(
-            dataset,
-            batch_size=self.batch_size,
-            num_workers=NUM_WORKERS
-            if self.config.NUM_WORKERS == "auto"
-            else self.config.NUM_WORKERS,
-            drop_last=True,
-            pin_memory=self.config.PIN_MEMORY,
-            prefetch_factor=self.config.PREFETCH_FACTOR,
-            shuffle=self.config.SHUFFLE,
-        )
+            cpu_affinity = os.sched_getaffinity(os.getpid())
+            if self.config.get("NUM_WORKERS", "auto") == "auto":
+                NUM_WORKERS = int(math.floor(0.9 * len(list(cpu_affinity))))
+            else:
+                NUM_WORKERS = self.config.NUM_WORKERS
+            NUM_WORKERS = int(math.floor(0.9 * len(list(cpu_affinity))))
+            dataloader = torch.utils.data.DataLoader(
+                dataset,
+                batch_size=self.batch_size,
+                num_workers=NUM_WORKERS
+                if self.config.NUM_WORKERS == "auto"
+                else self.config.NUM_WORKERS,
+                drop_last=True,
+                pin_memory=self.config.PIN_MEMORY,
+                prefetch_factor=self.config.PREFETCH_FACTOR,
+                shuffle=self.config.SHUFFLE,
+            )
 
         if len(dataloader) == 0:
             self.logger.warning(
@@ -795,8 +857,8 @@ class Engine:
                 #     sample["diffuse"].to(self.device, non_blocking=True)
                 # )
                 # Token inpainter ground truth
-                diffuse_teacher_tokens = self.model(
-                    rgb=sample["diffuse"].to(self.device, non_blocking=True),
+                diffuse_teacher_tokens = self.model(    
+                    sample["diffuse"].to(self.device, non_blocking=True),
                     just_extract_tokens=True,
                 )
 
@@ -833,7 +895,7 @@ class Engine:
                     "inpaint_mask_override": pixel_inpaint_mask,
                     "inpaint_mask_dilation": self.config.INPAINT_MASK_DILATION,
                 }
-                if self.config.get("USE_DATAPARALLEL", False):
+                if self._distribute == "dp":
                     pred_decomposition = self.model(
                         model_input["rgb"],
                         model_input["inpaint_mask_override"],
@@ -882,33 +944,23 @@ class Engine:
                             phase=phase,
                             submodules_to_monitor={
                                 "highlight_decoder": getattr(
-                                    self.model.module.decoders
-                                    if getattr(self.config, "USE_DATAPARALLEL", False)
-                                    else self.model.decoders,
+                                    self._unwrap_model().decoders,
                                     "highlight",
                                     None,
                                 ),
                                 "diffuse_decoder": getattr(
-                                    self.model.module.decoders
-                                    if getattr(self.config, "USE_DATAPARALLEL", False)
-                                    else self.model.decoders,
+                                    self._unwrap_model().decoders,
                                     "diffuse",
                                     None,
                                 ),
                                 "specular_decoder": getattr(
-                                    self.model.module.decoders
-                                    if getattr(self.config, "USE_DATAPARALLEL", False)
-                                    else self.model.decoders,
+                                    self._unwrap_model().decoders,
                                     "specular",
                                     None,
                                 ),
-                                "dinov3": self.model.module.dinov3
-                                if getattr(self.config, "USE_DATAPARALLEL", False)
-                                else self.model.dinov3,
+                                "dinov3": self._unwrap_model().dinov3,
                                 "token_inpaint": getattr(
-                                    self.model.module
-                                    if getattr(self.config, "USE_DATAPARALLEL", False)
-                                    else self.model,
+                                    self._unwrap_model(),
                                     "token_inpaint",
                                     None,
                                 ),
@@ -1281,8 +1333,8 @@ class Engine:
                     if images:
                         images_logged = True
 
-                # Console logging
-                if batch_idx % self.config.get("LOG_INTERVAL", 10) == 0:
+                # Console logging (rank 0 only when DDP)
+                if self._is_main_process() and batch_idx % self.config.get("LOG_INTERVAL", 10) == 0:
                     extra_info = (
                         "W" if is_training and step < self.warmup_steps else None
                     )
@@ -1294,8 +1346,8 @@ class Engine:
                         extra_info=extra_info,
                     )
 
-                # WandB logging the batch metrics
-                if self.wandb and batch_idx % self.logfreq_wandb == 0:
+                # WandB logging the batch metrics (rank 0 only when DDP)
+                if self._is_main_process() and self.wandb and batch_idx % self.logfreq_wandb == 0:
                     # Use the self._prepare_metrics_for_wandb function to format metrics properly
                     wandb_metrics = self._prepare_metrics_for_wandb(metrics, phase)
                     # Add the batch number
@@ -1337,13 +1389,24 @@ class Engine:
 
         # Compute average loss for epoch
         avg_loss = sum(epoch_losses) / len(epoch_losses) if epoch_losses else 0.0
-        self.logger.info(
-            f"Epoch {self.step['epoch'] + 1} - Average Loss: {avg_loss:.6f}",
-            context=phase.upper(),
-        )
+        if self._is_ddp and phase in ("Training", "Validation"):
+            # All-reduce so all ranks have the same avg_loss for early stopping / scheduler
+            loss_sum = torch.tensor(
+                [sum(epoch_losses), len(epoch_losses)],
+                dtype=torch.float64,
+                device=self.device,
+            )
+            dist.all_reduce(loss_sum, op=dist.ReduceOp.SUM)
+            total_loss, total_count = loss_sum[0].item(), loss_sum[1].item()
+            avg_loss = total_loss / total_count if total_count > 0 else 0.0
+        if self._is_main_process():
+            self.logger.info(
+                f"Epoch {self.step['epoch'] + 1} - Average Loss: {avg_loss:.6f}",
+                context=phase.upper(),
+            )
 
-        # Log epoch metrics to wandb
-        if self.wandb:
+        # Log epoch metrics to wandb (rank 0 only when DDP)
+        if self._is_main_process() and self.wandb:
             # For Test phase, filter using the stable column 'Step/test_idx'.
             # For Training/Validation, filter using 'Step/epoch' as before.
             if phase == "Test" and test_idx is not None:
@@ -1387,8 +1450,10 @@ class Engine:
         return avg_loss
 
     def _save_checkpoint(self, epoch, is_best=False):
-        """Save model checkpoint with enhanced state information"""
-        # Unwrap DataParallel and DataParallelWrapper so we save the real model state_dict
+        """Save model checkpoint with enhanced state information. Only rank 0 when DDP."""
+        if not self._is_main_process():
+            return
+        # Unwrap DataParallel and DDP so we save the real model state_dict
         m = getattr(self.model, "module", self.model)
         model_for_save = getattr(m, "module", m)
         checkpoint = {
@@ -1923,6 +1988,7 @@ class Engine:
         from utilities.run_resume import get_resume_info, load_checkpoint_for_resume
 
         # Get resume information
+        self.logger.markup = False
         resume_info = get_resume_info(run_identifier, self.RUNS_DIR)
         if resume_info is None:
             self.logger.error(f"Failed to get resume info for run: {run_identifier}")
@@ -2054,21 +2120,42 @@ class Engine:
             self.validation_metrics = checkpoint_data["validation_metrics_history"]
             self.logger.info("Restored validation metrics history", context="RESUME")
 
-        # Set the starting epoch
-        self.start_epoch = checkpoint_data["epoch"] + 1
+        # Set the starting epoch (checkpoint["epoch"] is 0-based last completed epoch)
+        last_completed_epoch = int(checkpoint_data["epoch"])
+        self.start_epoch = last_completed_epoch + 1
+        self.epochs = self.config["EPOCHS"] + self.start_epoch
+        self.step["epoch"] = self.start_epoch
         self.logger.info(
-            f"Resuming training from epoch {self.start_epoch}", context="RESUME"
+            f"Resuming training from epoch {self.start_epoch + 1} (1-based; next epoch index {self.start_epoch})",
+            context="RESUME",
+        )
+        self.logger.info(
+            f"Epoch range for this run: {self.start_epoch} to {self.epochs - 1} (total {self.epochs - self.start_epoch} epochs to run)",
+            context="RESUME",
         )
 
-        # Update wandb run ID if available and re-initialize wandb
+        # Log resumed-from epoch to WandB so the run summary shows correct continuity
+        if self._is_main_process() and self.wandb is not None:
+            self.wandb.run.summary["resumed_from_epoch_index"] = last_completed_epoch
+            self.wandb.run.summary["next_epoch_index"] = self.start_epoch
+
+        # Update wandb run ID if available and re-initialize wandb only if needed.
         if "wandb_run_id" in checkpoint_data and checkpoint_data["wandb_run_id"]:
-            self.resume_wandb_run_id = checkpoint_data["wandb_run_id"]
-            self.logger.info(
-                f"Will resume wandb run: {self.resume_wandb_run_id}", context="RESUME"
+            target_run_id = checkpoint_data["wandb_run_id"]
+            current_run_id = (
+                getattr(self.wandb, "id", None) if getattr(self, "wandb", None) else None
             )
 
-            # Re-initialize wandb with the correct run ID
-            self._reinitialize_wandb()
+            # Only reinitialize WandB if we are not already attached to the correct run.
+            if target_run_id != current_run_id:
+                self.resume_wandb_run_id = target_run_id
+                self.logger.info(
+                    f"Will resume wandb run: {self.resume_wandb_run_id}",
+                    context="RESUME",
+                )
+
+                # Re-initialize wandb with the correct run ID
+                self._reinitialize_wandb()
 
         return True
 
@@ -2297,7 +2384,10 @@ class Engine:
     def _load_and_increment_test_index(self) -> int:
         """Load current test index from RUN_DIR and increment it for next test.
         Returns the current index to be used for this test.
+        When DDP, only rank 0 reads/writes the file.
         """
+        if self._is_ddp and not self._is_main_process():
+            return 0
         idx_path = os.path.join(self.RUN_DIR, "test_index.txt")
         current = 0
         try:

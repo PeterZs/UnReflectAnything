@@ -6,6 +6,7 @@ import argparse
 import os
 import time
 import torch
+import torch.distributed as dist
 
 import debugpy
 from rich.traceback import install
@@ -14,6 +15,7 @@ from engine import Engine
 from logger import get_logger
 from utilities.system_ops import titlescreen
 from typing import Dict, Any, Optional
+from utilities.config import DISTRIBUTE_DDP, DISTRIBUTE_DP, DISTRIBUTE_SINGLEGPU
 
 logger = get_logger(__name__).set_context("IMPORT")
 
@@ -61,7 +63,7 @@ def run_pipeline(mode: str = "train", config: Optional[Dict[str, Any]] = None) -
         create_model_from_config,
         create_datasets_from_config,
         load_and_process_config,
-        maybe_wrap_data_parallel,
+        wrap_model_for_parallelization,
     )
 
     install(show_locals=False)
@@ -132,9 +134,40 @@ def run_pipeline(mode: str = "train", config: Optional[Dict[str, Any]] = None) -
             logger.info("Waiting for debugger to attach...")
             debugpy.wait_for_client()
 
-    # Show title screen if available
+    # Load and process configuration
+    CONFIG_PATH = args.config
+    config = load_and_process_config(
+        config_path=CONFIG_PATH,
+        config=config,
+        unknown_args=unknown,
+        boot_mode=args.boot,
+    )
+
+    # Resolve DISTRIBUTE and set device / DDP context
+    distribute = config.get("DISTRIBUTE", DISTRIBUTE_SINGLEGPU)
+    ddp_rank = None
+    ddp_world_size = None
+
+    if distribute == DISTRIBUTE_DDP:
+        if "RANK" not in os.environ or "LOCAL_RANK" not in os.environ:
+            raise RuntimeError(
+                "DISTRIBUTE is 'ddp' but not launched with torchrun. "
+                "Run: torchrun --nproc_per_node=N train.py --config <config> ..."
+            )
+        dist.init_process_group(backend="gloo")
+        local_rank = int(os.environ["LOCAL_RANK"])
+        ddp_rank = int(os.environ["RANK"])
+        ddp_world_size = int(os.environ["WORLD_SIZE"])
+        config["LOCAL_RANK"] = local_rank
+        config["RANK"] = ddp_rank
+        config["WORLD_SIZE"] = ddp_world_size
+        DEVICE = torch.device(f"cuda:{local_rank}")
+    else:
+        DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+    # Initial logging: logger is DDP-aware and emits to console only on rank 0
     try:
-        titlescreen()
+        logger.info(titlescreen(), context="INFO")
     except Exception:
         logger.info("=" * 50, context="INFO")
         logger.info("UnReflectAnything - Reflection Removal Training", context="INFO")
@@ -145,7 +178,6 @@ def run_pipeline(mode: str = "train", config: Optional[Dict[str, Any]] = None) -
     logger.info(f"CUDA version: {torch.version.cuda}")
     logger.info(f"CUDNN version: {torch.backends.cudnn.version()}")
 
-    # Get CPU info
     try:
         cpu_affinity = os.sched_getaffinity(os.getpid())
         CPU_AFFINITY = len(list(cpu_affinity))
@@ -154,16 +186,6 @@ def run_pipeline(mode: str = "train", config: Optional[Dict[str, Any]] = None) -
         logger.info("Couldn't get CPU affinity", context="INFO")
 
     logger.info(f"CUDA available: {torch.cuda.is_available()}")
-    DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
-    # Load and process configuration
-    CONFIG_PATH = args.config
-    config = load_and_process_config(
-        config_path=CONFIG_PATH,
-        config=config,
-        unknown_args=unknown,
-        boot_mode=args.boot,
-    )
 
     # Run the appropriate function based on mode
     try:
@@ -176,26 +198,65 @@ def run_pipeline(mode: str = "train", config: Optional[Dict[str, Any]] = None) -
 
                 # Create model
                 model = create_model_from_config(config, DEVICE)
-                model = maybe_wrap_data_parallel(model, config)
+                model = wrap_model_for_parallelization(model, config)
 
                 # Create datasets for training
                 dataset = create_datasets_from_config(config)
 
-                # Initialize engine
+                # Discover existing run directories and latest checkpoint without
+                # creating a new WandB run or new run directory.
+                from utilities.run_resume import (
+                    get_resume_info,
+                    load_checkpoint_for_resume,
+                )
+
+                resume_info = get_resume_info(
+                    args.resume_run, initialize.device_and_directories(config)["runs_dir"]
+                )
+                if resume_info is None:
+                    logger.error(
+                        f"No existing run matched resume identifier: {args.resume_run}"
+                    )
+                    return
+
+                checkpoint_data = load_checkpoint_for_resume(
+                    resume_info["latest_checkpoint"], DEVICE
+                )
+                if checkpoint_data is None:
+                    logger.error(
+                        f"Failed to load checkpoint for resume run: {args.resume_run}"
+                    )
+                    return
+
+                resume_wandb_run_id = checkpoint_data.get("wandb_run_id", None)
+
+                # Initialize engine in resume mode so that:
+                # - Existing run directories are reused (no new RUN_DIR is created)
+                # - WandB is resumed directly using the stored run ID (no new run)
                 engine = Engine(
-                    model=model,  # Pass the created model
+                    model=model,
                     dataset=dataset,
                     config=config,
                     no_wandb=config.get("NO_WANDB", False),
                     notes=config.get("NOTES", ""),
+                    resume_run_id=resume_wandb_run_id,
+                    will_resume=True,
+                    resume_info=resume_info,
+                    rank=ddp_rank,
+                    world_size=ddp_world_size,
                 )
 
-                # Mark that we will resume to skip directory setup during init
-                engine._will_resume = True
-
-                # Resume from the specified run
-                if not engine.resume_from_run(args.resume_run):
-                    logger.error(
+                # Resume from the specified run (all ranks must succeed or all exit)
+                resume_ok = engine.resume_from_run(args.resume_run)
+                if distribute == DISTRIBUTE_DDP:
+                    success_int = 1 if resume_ok else 0
+                    sync_tensor = torch.tensor(
+                        success_int, device=DEVICE, dtype=torch.int64
+                    )
+                    dist.all_reduce(sync_tensor, op=dist.ReduceOp.MIN)
+                    resume_ok = sync_tensor.item() == 1
+                if not resume_ok:
+                    logger.info(
                         "Failed to resume training. Exiting.", context="RESUME"
                     )
                     return
@@ -214,19 +275,21 @@ def run_pipeline(mode: str = "train", config: Optional[Dict[str, Any]] = None) -
                 # Normal training (new run)
                 # Create model
                 model = create_model_from_config(config, DEVICE)
-                model = maybe_wrap_data_parallel(model, config)
+                model = wrap_model_for_parallelization(model, config)
 
                 # Create datasets for training
                 dataset = create_datasets_from_config(config)
 
                 # Initialize engine
                 engine = Engine(
-                    model=model,  # Pass the created model
+                    model=model,
                     dataset=dataset,
                     config=config,
                     no_wandb=config.get("NO_WANDB", False),
                     resume_run_id=args.resume_run,
                     notes=config.get("NOTES", ""),
+                    rank=ddp_rank,
+                    world_size=ddp_world_size,
                 )
 
                 # Train the model
@@ -259,7 +322,7 @@ def run_pipeline(mode: str = "train", config: Optional[Dict[str, Any]] = None) -
 
             # Create model and datasets using the current config
             model = create_model_from_config(config, DEVICE)
-            model = maybe_wrap_data_parallel(model, config)
+            model = wrap_model_for_parallelization(model, config)
             dataset = create_datasets_from_config(config)
 
             # Initialize engine in resume mode, resuming the existing WandB run
@@ -272,6 +335,8 @@ def run_pipeline(mode: str = "train", config: Optional[Dict[str, Any]] = None) -
                 resume_run_id=None,  # let initializer resolve RUN by display name
                 will_resume=True,
                 resume_info=resume_info,
+                rank=ddp_rank,
+                world_size=ddp_world_size,
             )
 
             # Load best model from existing run and test
