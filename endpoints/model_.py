@@ -18,7 +18,7 @@ def _nn_module_base():
 
 
 def model(
-    pretrained: bool = False,
+    pretrained: bool = True,
     weights_path: Optional[Union[str, PathLike, Path]] = None,
     device: str = "cuda",
     config_path: Optional[Union[str, PathLike, Path, dict]] = None,
@@ -32,9 +32,9 @@ def model(
     Use this for a lightweight API: get a callable module and run it on tensors.
 
     Args:
-        pretrained: If False (default), return the underlying model class
+        pretrained: If False , return the underlying model class
             (UnReflect_Model_TokenInpainter) for custom instantiation or training.
-            If True, return an ``UnReflectModel`` instance with weights loaded,
+            If True (default), return an ``UnReflectModel`` instance with weights loaded,
             which you can call with a batched RGB tensor.
         weights_path: Path to checkpoint. Only used when pretrained=True.
             Ignored if ``weights`` is provided.
@@ -175,12 +175,13 @@ class UnReflectModel(_nn_module_base()):
             if isinstance(sd, dict) and sd:
                 model_keys = set(inner.state_dict().keys())
                 ckpt_keys = set(sd.keys())
-                if ckpt_keys and not (model_keys & ckpt_keys) and all(
-                    k.startswith("module.") for k in ckpt_keys
-                ):
-                    sd = {k.removeprefix("module."): v for k, v in sd.items()}
-                    if verbose:
-                        print("State dict keys were prefixed with 'module.'; stripped to match model.")
+                # Strip common wrapper prefixes when no key matches (e.g. module., model., _model.)
+                for prefix in ("module.", "model.", "_model."):
+                    if ckpt_keys and not (model_keys & ckpt_keys) and all(k.startswith(prefix) for k in ckpt_keys):
+                        sd = {k.removeprefix(prefix): v for k, v in sd.items()}
+                        if verbose:
+                            print(f"State dict keys were prefixed with '{prefix}'; stripped to match model.")
+                        break
             inner.load_state_dict(sd, strict=False)
             inner.eval()
         else:
