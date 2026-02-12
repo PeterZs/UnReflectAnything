@@ -7,7 +7,7 @@ from typing import Literal, Optional, Union
 
 from os import PathLike
 
-from unreflectanything._shared import (
+from ._shared import (
     download_configs,
     download_images,
     download_notebooks,

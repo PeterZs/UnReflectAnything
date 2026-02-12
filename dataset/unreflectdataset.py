@@ -217,7 +217,6 @@ class UnReflectAnything_Dataset(Dataset):
             was_2d = True
         else:
             was_2d = False
-        print("current_size", tensor.shape)
         current_size = tensor.shape[-2:]  # [H, W]
 
         if self.resize_mode == "crop":

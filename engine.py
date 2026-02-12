@@ -80,7 +80,7 @@ class Engine:
         self._is_ddp = (
             world_size is not None and world_size > 1
         )
-        self._distribute = config.get("DISTRIBUTE", "singlegpu")
+        self._distribute = config.get("DISTRIBUTE", "single")
 
         # Initialize device and directories
         device_dirs = initialize.device_and_directories(config)
@@ -852,15 +852,16 @@ class Engine:
                     invert=False,
                 )
 
-                # # Token inpainter ground truth --> REMOVED: Incompatibility with DataParallel
-                # diffuse_teacher_tokens = self.model.extract_tokens(
-                #     sample["diffuse"].to(self.device, non_blocking=True)
-                # )
-                # Token inpainter ground truth
-                diffuse_teacher_tokens = self.model(    
-                    sample["diffuse"].to(self.device, non_blocking=True),
-                    just_extract_tokens=True,
-                )
+                # Token inpainter ground truth: run with unwrapped model under no_grad so that
+                # only one forward per step goes through DDP and participates in loss. Otherwise
+                # DDP sees a forward that does not use all parameters (just_extract_tokens=True
+                # uses only the encoder) and raises "Expected to have finished reduction...".
+                diffuse_img = sample["diffuse"].to(self.device, non_blocking=True)
+                with torch.no_grad():
+                    raw_model = self._unwrap_model()
+                    diffuse_teacher_tokens = raw_model(
+                        diffuse_img, just_extract_tokens=True
+                    )
 
                 ### Constructing ground truth dict
                 rgb_highlighted = highlight_result["rgb_highlighted"]

@@ -102,10 +102,26 @@ def run_pipeline(mode: str = "train", config: Optional[Dict[str, Any]] = None) -
         type=str,
         help="Resume training from an existing run. Provide the run name or run ID.",
     )
-    parser.add_argument(
-        "--distill-from",
-        type=str,
-        help="Train using knowledge distillation from a teacher model. Provide the run name or run ID of the teacher model.",
+    group = parser.add_mutually_exclusive_group()
+    group.add_argument(
+        "--ddp",
+        action="store_true",
+        help="Force DistributedDataParallel (overrides DISTRIBUTE in config)",
+    )
+    group.add_argument(
+        "--dp",
+        action="store_true",
+        help="Force DataParallel (overrides DISTRIBUTE in config)",
+    )
+    group.add_argument(
+        "--single",
+        action="store_true",
+        help="Force single-GPU, non-distributed (overrides DISTRIBUTE). Short form.",
+    )
+    group.add_argument(
+        "--singlegpu",
+        action="store_true",
+        help="Alias for --single (single-GPU, non-distributed).",
     )
 
     # Parse known and unknown arguments
@@ -143,6 +159,14 @@ def run_pipeline(mode: str = "train", config: Optional[Dict[str, Any]] = None) -
         boot_mode=args.boot,
     )
 
+    # Optionally override DISTRIBUTE from CLI (--ddp, --dp, --single / --singlegpu)
+    if args.ddp:
+        config["DISTRIBUTE"] = DISTRIBUTE_DDP
+    elif args.dp:
+        config["DISTRIBUTE"] = DISTRIBUTE_DP
+    elif args.single or args.singlegpu:
+        config["DISTRIBUTE"] = DISTRIBUTE_SINGLEGPU
+
     # Resolve DISTRIBUTE and set device / DDP context
     distribute = config.get("DISTRIBUTE", DISTRIBUTE_SINGLEGPU)
     ddp_rank = None
@@ -154,7 +178,7 @@ def run_pipeline(mode: str = "train", config: Optional[Dict[str, Any]] = None) -
                 "DISTRIBUTE is 'ddp' but not launched with torchrun. "
                 "Run: torchrun --nproc_per_node=N train.py --config <config> ..."
             )
-        dist.init_process_group(backend="gloo")
+        dist.init_process_group(backend=config.get("DISTBACKEND", "gloo"))
         local_rank = int(os.environ["LOCAL_RANK"])
         ddp_rank = int(os.environ["RANK"])
         ddp_world_size = int(os.environ["WORLD_SIZE"])

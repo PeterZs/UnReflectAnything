@@ -14,9 +14,9 @@ def _verify_weights_impl(
 ) -> bool:
     """Verify weights file exists and loads into model with no key alignment errors."""
     import torch
-    from inference import InferenceOptions, load_model
+    from utilities.model import load_pretrained
 
-    from unreflectanything._shared import DEFAULT_WEIGHTS_FILENAME, get_cache_dir
+    from ._shared import DEFAULT_WEIGHTS_FILENAME, get_cache_dir
 
     if weights_path is None:
         resolved = get_cache_dir("weights") / DEFAULT_WEIGHTS_FILENAME
@@ -27,19 +27,20 @@ def _verify_weights_impl(
         print(f"Weights file not found: {resolved}")
         return False
     print(
-        f"Found weights file: {resolved}\nLoading weights and verifying key alignemnts..."
+        f"Found weights file: {resolved}\nLoading weights and verifying key alignments..."
     )
 
-    options = InferenceOptions(
-        weights_path=resolved,
-        input_dir=Path("."),
-        output_dir=Path("."),
-        model_config_path=Path(model_config_path) if model_config_path else None,
-    )
+    config_path = Path(model_config_path).expanduser().resolve() if model_config_path else None
 
     try:
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        load_model(options, device, strict=True, verbose=False)
+        load_pretrained(
+            weights_path=resolved,
+            config_path=config_path,
+            device=str(device),
+            strict=True,
+            verbose=False,
+        )
         print("✔️  Weights verified: loaded into model with no key alignment errors.")
         return True
     except (KeyError, RuntimeError, FileNotFoundError) as e:

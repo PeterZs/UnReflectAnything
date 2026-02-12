@@ -14,7 +14,7 @@ except ImportError:
     Image = None  # type: ignore[misc, assignment]
     TF = None  # type: ignore[misc, assignment]
 
-from unreflectanything._shared import DEFAULT_IMAGE_EXTENSIONS, _collect_image_paths
+from ._shared import DEFAULT_IMAGE_EXTENSIONS, _collect_image_paths
 
 
 if Dataset is not None:

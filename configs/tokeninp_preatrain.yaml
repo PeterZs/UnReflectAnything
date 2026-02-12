@@ -158,7 +158,7 @@ parameters:
   BATCH_SIZE: # Max batch size with img size 896 is 32
     value: 4 # Number of samples per batch (adjust based on GPU memory)
   NUM_WORKERS:
-    value: 16  # Number of data loading worker processes (0 = main process only, "auto" = 90% of CPU affinity)
+    value: 4  # Number of data loading worker processes (0 = main process only, "auto" = 90% of CPU affinity)
   SHUFFLE:
     value: True  # Shuffle training data each epoch (False for validation/test)
   PIN_MEMORY:

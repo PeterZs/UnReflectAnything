@@ -14,7 +14,7 @@ import json
 logger = get_logger(__name__).set_context("CONFIG")
 
 # Allowed values for DISTRIBUTE (training distribution mode)
-DISTRIBUTE_SINGLEGPU = "singlegpu"
+DISTRIBUTE_SINGLEGPU = "single"
 DISTRIBUTE_DP = "dp"
 DISTRIBUTE_DDP = "ddp"
 
@@ -22,11 +22,11 @@ DISTRIBUTE_DDP = "ddp"
 def resolve_distribute(config: DotMap) -> None:
     """
     Resolve and normalize config.DISTRIBUTE from config.
-    Mutates config so that config.get("DISTRIBUTE", "singlegpu") is always one of
-    "singlegpu", "dp", "ddp".
+    Mutates config so that config.get("DISTRIBUTE", "single") is always one of
+    "single", "dp", "ddp".
     """
-    distribute_entry = config.get("DISTRIBUTE", "singlegpu")
-    if distribute_entry == "singlegpu" and torch.cuda.device_count() > 1:
+    distribute_entry = config.get("DISTRIBUTE", "single")
+    if distribute_entry == "single" and torch.cuda.device_count() > 1:
         logger.warning(
             f"DISTRIBUTE is 'singlegpu' even though multiple GPUs are available"
         )
@@ -292,11 +292,13 @@ def wrap_model_for_parallelization(model: torch.nn.Module, config: DotMap):
     When config.DISTRIBUTE == "dp" and CUDA is available: wrap model in DataParallelWrapper
     (so forward receives scatterable args) and nn.DataParallel when multiple GPUs.
     When DISTRIBUTE == "ddp", return model unchanged (main wraps with DDP).
-    When DISTRIBUTE == "singlegpu", return model unchanged.
+    When DISTRIBUTE == "single", return model unchanged.
     """
     if config.get("DISTRIBUTE") == DISTRIBUTE_DDP:
         return torch.nn.parallel.DistributedDataParallel(
-            model, device_ids=[config.get("LOCAL_RANK")]
+            model,
+            device_ids=[config.get("LOCAL_RANK")],
+            find_unused_parameters=True,
         )
     if config.get("DISTRIBUTE") == DISTRIBUTE_DP:
         model = DataParallelWrapper(model)

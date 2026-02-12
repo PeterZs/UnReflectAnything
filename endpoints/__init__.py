@@ -53,43 +53,43 @@ def __getattr__(name: str):
     """Lazy imports so that `import unreflectanything` and CLI --help stay fast."""
     # New API functions (one module per subcommand)
     if name == "inference":
-        from unreflectanything.inference_ import inference
+        from .inference_ import inference
 
         return inference
     if name == "model":
-        from unreflectanything.model_ import model
+        from .model_ import model
 
         return model
     if name == "UnReflectModel":
-        from unreflectanything.model_ import UnReflectModel
+        from .model_ import UnReflectModel
 
         return UnReflectModel
     if name == "train":
-        from unreflectanything.train_ import train
+        from .train_ import train
 
         return train
     if name == "test":
-        from unreflectanything.test_ import test
+        from .test_ import test
 
         return test
     if name == "download":
-        from unreflectanything.download_ import download
+        from .download_ import download
 
         return download
     if name == "evaluate":
-        from unreflectanything.evaluate_ import evaluate
+        from .evaluate_ import evaluate
 
         return evaluate
     if name == "verify":
-        from unreflectanything.verify_ import verify
+        from .verify_ import verify
 
         return verify
     if name == "verify_dataset":
-        from unreflectanything.verify_ import verify_dataset
+        from .verify_ import verify_dataset
 
         return verify_dataset
     if name == "cite":
-        from unreflectanything.cite_ import cite
+        from .cite_ import cite
 
         return cite
 
@@ -111,15 +111,15 @@ def __getattr__(name: str):
 
         return run_inference
     if name == "get_cache_dir":
-        from unreflectanything._shared import get_cache_dir
+        from ._shared import get_cache_dir
 
         return get_cache_dir
     if name == "ImageDirDataset":
-        from unreflectanything.dataset_ import ImageDirDataset
+        from .dataset_ import ImageDirDataset
 
         return ImageDirDataset
     if name == "DEFAULT_IMAGE_EXTENSIONS":
-        from unreflectanything._shared import DEFAULT_IMAGE_EXTENSIONS
+        from ._shared import DEFAULT_IMAGE_EXTENSIONS
 
         return DEFAULT_IMAGE_EXTENSIONS
 

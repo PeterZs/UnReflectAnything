@@ -24,7 +24,7 @@ logger = get_logger(__name__)
 
 def device_and_directories(config):
     """Initialize device and create necessary directories. Branch on config.DISTRIBUTE."""
-    distribute = config.get("DISTRIBUTE", "singlegpu")
+    distribute = config.get("DISTRIBUTE", "single")
     if distribute == "ddp":
         device = torch.device(f"cuda:{config.LOCAL_RANK}")
     elif distribute == "dp" and torch.cuda.is_available() and torch.cuda.device_count() > 1:
@@ -58,7 +58,7 @@ def dataloaders(dataset, config):
     batch_size = config["BATCH_SIZE"]
     shuffle = config["SHUFFLE"]
 
-    distribute = config.get("DISTRIBUTE", "singlegpu")
+    distribute = config.get("DISTRIBUTE", "single")
     if distribute == "ddp":
         rank = config["RANK"]
         world_size = config["WORLD_SIZE"]

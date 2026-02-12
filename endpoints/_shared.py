@@ -47,7 +47,7 @@ def get_cache_dir(subdir: Optional[str] = "") -> Path:
         base = os.environ.get("LOCALAPPDATA", os.path.expanduser("~/.cache"))
     else:
         base = os.environ.get("XDG_CACHE_HOME", os.path.expanduser("~/.cache"))
-    if subdir not in ["weights", "images", "notebooks", "configs"]:
+    if subdir not in ["weights", "images", "notebooks", "configs",""]:
         import warnings
 
         warnings.warn(
@@ -87,12 +87,13 @@ def download_weights(
         output_dir = Path(output_dir).expanduser().resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
     revision = None if variant == "default" else variant
+    # Only download .pt weight files; skip blobs/ and other repo internals
     snapshot_download(
         repo_id=repo_id,
         local_dir=str(output_dir),
         revision=revision,
         force_download=force,
-        allow_patterns=[f"{WEIGHTS_SUBFOLDER}/*", f"{WEIGHTS_SUBFOLDER}/**/*"],
+        allow_patterns=[f"{WEIGHTS_SUBFOLDER}/*.pt"],
     )
     subfolder_path = output_dir / WEIGHTS_SUBFOLDER
     if subfolder_path.exists() and subfolder_path.is_dir():

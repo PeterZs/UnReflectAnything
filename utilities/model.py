@@ -572,6 +572,15 @@ def load_pretrained(
     state_dict = checkpoint.get("model_state_dict")
     if state_dict is None:
         raise KeyError("Checkpoint does not contain model_state_dict")
+
+    # Handle checkpoints saved with DataParallel / wrapped module: keys may be prefixed with "module."
+    model_keys = set(model.state_dict().keys())
+    ckpt_keys = set(state_dict.keys())
+    if ckpt_keys and not (model_keys & ckpt_keys) and all(k.startswith("module.") for k in ckpt_keys):
+        state_dict = {k.removeprefix("module."): v for k, v in state_dict.items()}
+        if verbose:
+            print("Checkpoint keys were prefixed with 'module.'; stripped prefix to match model.")
+
     missing, unexpected = model.load_state_dict(state_dict, strict=strict)
     if not strict:
         if missing:
