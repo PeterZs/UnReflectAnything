@@ -64,7 +64,7 @@ def create_model_from_config(
             - DATASETS: Dataset configurations for extracting target image size
             - USE_TORCH_COMPILE: If True, compile the model (ignored when DATAPARALLEL).
         device (torch.device): PyTorch device to place the model on (e.g., 'cuda' or 'cpu')
-        verbose: If True, print/log progress information. Defaults to True.
+        verbose: If True, log progress information. Defaults to True.
 
     Returns:
         nn.Module: The initialized model ready for training or inference
@@ -360,7 +360,6 @@ def create_datasets_from_config(
         Dict with keys 'Training', 'Validation', 'Test' (ConcatDataset or None),
         and 'workers' (int).
     """
-    from dataset.unreflectdataset import UnReflectAnything_Dataset
     from dataset.wrappers import DATASET_DEFAULTS
 
     # Keys that map from config/YAML (uppercase) to base class kwargs (snake_case)
@@ -388,9 +387,11 @@ def create_datasets_from_config(
         datasets_config = config.DATASETS
         all_overrides = {}
         if isinstance(datasets_config, dict) and datasets_config is not None:
-            _ao = datasets_config.get(ALL_DATASETS_KEY)
-            if isinstance(_ao, dict):
-                all_overrides = _ao
+            overrides = datasets_config.get("ALL_DATASETS")
+            if isinstance(overrides, dict) or (hasattr(overrides, "toDict") and callable(getattr(overrides, "toDict", None))):
+                # Accept DotMap as well as dict for ALL_DATASETS
+                all_overrides = dict(overrides) if isinstance(overrides, dict) else dict(overrides.toDict())
+                logger.info(f"Overriding datasets settings with : {all_overrides}", context="DATASETS")
         if dataset_names is None:
             dataset_names = []
             if isinstance(datasets_config, dict) and datasets_config is not None:
@@ -423,11 +424,11 @@ def create_datasets_from_config(
                     f"Dataset '[orange1]{dataset_name}[/]' has no dict config. Skipping."
                 )
                 continue
-            # Merge ALL_DATASETS overrides first, then per-dataset (per-dataset takes precedence)
-            effective_config = {**all_overrides, **dataset_config}
 
+            # Fix: Actually apply per-dataset values as override to the ALL_DATASETS defaults (per-dataset takes precedence)
+            dataset_config.update(all_overrides)  # then update with per-dataset
             def get_config_value(param_name, default_value):
-                dataset_value = effective_config.get(param_name)
+                dataset_value = dataset_config.get(param_name)
                 if dataset_value is not None:
                     return dataset_value
                 global_param = global_config.get(param_name, {})
@@ -451,39 +452,39 @@ def create_datasets_from_config(
 
             dataset_params = {
                 **identity,
-                "rho_s": get_config_value("RHO_S", 0.6),
-                "eps": get_config_value("EPS", 1e-8),
-                "target_size": tuple(get_config_value("TARGET_SIZE", [224, 224])),
-                "resize_mode": get_config_value("RESIZE_MODE", "crop"),
-                "use_cache": get_config_value("USE_CACHE", True),
-                "simplify_upsampling": get_config_value("SIMPLIFY_UPSAMPLING", True),
-                "few_images": get_config_value("FEW_IMAGES", False),
-                "sample_every_n": get_config_value("SAMPLE_EVERY_N", 1),
-                "load_rgb_only": get_config_value("LOAD_RGB_ONLY", False),
-                "highlight_enable": get_config_value("HIGHLIGHT_ENABLE", False),
-                "highlight_brightness_threshold": get_config_value(
+                "rho_s": dataset_config.get("RHO_S", 0.6),
+                "eps": dataset_config.get("EPS", 1e-8),
+                "target_size": tuple(dataset_config.get("TARGET_SIZE", [224, 224])),
+                "resize_mode": dataset_config.get("RESIZE_MODE", "crop"),
+                "use_cache": dataset_config.get("USE_CACHE", True),
+                "simplify_upsampling": dataset_config.get("SIMPLIFY_UPSAMPLING", True),
+                "few_images": dataset_config.get("FEW_IMAGES", False),
+                "sample_every_n": dataset_config.get("SAMPLE_EVERY_N", 1),
+                "load_rgb_only": dataset_config.get("LOAD_RGB_ONLY", False),
+                "highlight_enable": dataset_config.get("HIGHLIGHT_ENABLE", False),
+                "highlight_brightness_threshold": dataset_config.get(
                     "HIGHLIGHT_BRIGHTNESS_THRESHOLD", 0.93
                 ),
-                "highlight_return_mask": get_config_value(
+                "highlight_return_mask": dataset_config.get(
                     "HIGHLIGHT_RETURN_MASK", False
                 ),
-                "highlight_return_rect": get_config_value(
+                "highlight_return_rect": dataset_config.get(
                     "HIGHLIGHT_RETURN_RECT", False
                 ),
-                "highlight_return_rect_as_rgb": get_config_value(
+                "highlight_return_rect_as_rgb": dataset_config.get(
                     "HIGHLIGHT_RETURN_RECT_AS_RGB", False
                 ),
             }
 
-            rect_size_val = get_config_value("HIGHLIGHT_RECT_SIZE", None)
+            rect_size_val = dataset_config.get("HIGHLIGHT_RECT_SIZE", None)
             if rect_size_val is not None:
                 try:
                     dataset_params["highlight_rect_size"] = tuple(rect_size_val)
                 except Exception:
                     dataset_params["highlight_rect_size"] = None
 
-            dataset_train_scenes = effective_config.get("TRAIN_SCENES", [])
-            dataset_val_scenes = effective_config.get("VAL_SCENES", [])
+            dataset_train_scenes = dataset_config.get("TRAIN_SCENES", [])
+            dataset_val_scenes = dataset_config.get("VAL_SCENES", [])
 
             val_scenes = (
                 global_val_scenes
@@ -508,7 +509,7 @@ def create_datasets_from_config(
                 )
 
             dataset_class = _resolve_dataset_class(
-                global_config, dataset_name, effective_config
+                global_config, dataset_name, dataset_config
             )
 
             if train_scenes is not None and len(train_scenes) > 0:
@@ -701,23 +702,12 @@ def load_and_process_config(
                         new_value = orig_type(value)
                     config_dict[key] = new_value
                 except Exception as e:
-                    print(f"Could not convert value for {key}: {value}, error: {e}")
+                    logger.warning(f"Could not convert value for {key}: {value}, error: {e}")
             else:
-                print(f"Warning: Unknown parameter {key}")
+                logger.warning(f"Warning: Unknown parameter {key}")
 
     # Convert the configuration dictionary to a DotMap for easy access
     config = DotMap(config_dict)
-
-    # Override FEW_IMAGES for all datasets if FEW_IMAGES_ALL_DATASETS is True (legacy; prefer ALL_DATASETS.FEW_IMAGES in DATASETS)
-    if getattr(config, "FEW_IMAGES_ALL_DATASETS", False):
-        _fav = getattr(config.FEW_IMAGES_ALL_DATASETS, "value", config.FEW_IMAGES_ALL_DATASETS)
-        if _fav:
-            for dataset_name, dataset_config in config.DATASETS.items():
-                if dataset_name == ALL_DATASETS_KEY:
-                    continue
-                if isinstance(dataset_config, dict):
-                    dataset_config["FEW_IMAGES"] = True
-            logger.info("FEW_IMAGES_ALL_DATASETS enabled - loading few images for all datasets")
 
     # Override parameters if boot mode is enabled
     if boot_mode:
@@ -727,8 +717,6 @@ def load_and_process_config(
         config.USE_TORCH_COMPILE = False
         # Set FEW_IMAGES to True for all datasets in boot mode
         for dataset_name, dataset_config in config.DATASETS.items():
-            if dataset_name == ALL_DATASETS_KEY:
-                continue
             if isinstance(dataset_config, dict):
                 dataset_config["FEW_IMAGES"] = True
         logger.info("Boot mode enabled - using minimal parameters for quick testing")

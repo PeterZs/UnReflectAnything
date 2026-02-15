@@ -158,7 +158,6 @@ def run_pipeline(mode: str = "train", config: Optional[Dict[str, Any]] = None) -
         unknown_args=unknown,
         boot_mode=args.boot,
     )
-
     # Optionally override DISTRIBUTE from CLI (--ddp, --dp, --single / --singlegpu)
     if args.ddp:
         config["DISTRIBUTE"] = DISTRIBUTE_DDP

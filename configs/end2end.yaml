@@ -49,12 +49,12 @@ parameters:
         USE_POSITIONAL_ENCODING: True  # Enable 2D sinusoidal positional encodings
         USE_FINAL_NORM: True  # Enable final LayerNorm before output projection
         USE_LOCAL_PRIOR: True  # Blend local mean prior for masked seeds
-        LOCAL_PRIOR_WEIGHT: 0.9  # Weight for local prior blending (1.0 = only mask_token, 0.0 = only local mean)
+        LOCAL_PRIOR_WEIGHT: 0.5  # Weight for local prior blending (1.0 = only mask_token, 0.0 = only local mean)
         LOCAL_PRIOR_KERNEL: 5  # Kernel size for local prior blending (> 1)
         SEED_NOISE_STD: 0.02  # Standard deviation of noise added to masked seeds during training  
   
   INPAINT_MASK_DILATION:
-    value: 21  # Dilation kernel size (pixels) for inpaint mask - Must be odd
+    value: 31  # Dilation kernel size (pixels) for inpaint mask - Must be odd
   USE_TORCH_COMPILE:  # Enable PyTorch 2.0 torch.compile for faster training (experimental)
     value: False
   DISTRIBUTE:
@@ -95,7 +95,6 @@ parameters:
         VAL_SCENES: ["P2_2"]  # Validation scene names
         RESIZE_MODE: "resize+crop"  # Image resizing mode
         SAMPLE_EVERY_N: 2  # Load every Nth frame
-          # Load only first 10 imagas if True
 
       CHOLEC80:
         TRAIN_SCENES: ["train"]  # Validation scene names
@@ -111,6 +110,12 @@ parameters:
       SCANNET:
         TRAIN_SCENES: ["train"]
         VAL_SCENES: ["val"]
+        RESIZE_MODE: "resize+crop"
+        SAMPLE_EVERY_N: 5
+
+      OPENIMAGESV7:
+        TRAIN_SCENES: ["thescene"]
+        # VAL_SCENES: [""]
         RESIZE_MODE: "resize+crop"
         SAMPLE_EVERY_N: 5
       
@@ -164,7 +169,7 @@ parameters:
   LEARNING_RATE:
     value: 1.0e-3  # Base learning rate for optimizer   # DEPRECATED. SETTING LR FOR EACH MODULE ABOVE
   WEIGHT_DECAY:   
-    value: 0.0  # L2 regularization weight (0.0 = no weight decay)
+    value: 0.0 # L2 regularization weight (0.0 = no weight decay)
   EPOCHS:
     value: 20  # Maximum number of training epochs
   GRADIENT_ACCUMULATION_STEPS:
@@ -178,11 +183,11 @@ parameters:
       ONPLATEAU:  # ReduceLROnPlateau scheduler (reduces LR when validation metric plateaus)
         PATIENCE: 5  # Number of epochs to wait before reducing LR
         FACTOR: 0.1  # Factor by which LR is reduced (new_lr = old_lr * factor)
-      # COSINE:  # CosineAnnealingLR scheduler (cosine annealing schedule)
-      #   N_PERIODS: 5  # Number of cosine periods over training
-      STEPWISE:  # StepLR scheduler (reduces LR at fixed step intervals)
-        N_STEPS: 4  # Number of times to reduce LR during training
-        GAMMA: 0.5  # Factor by which LR is reduced at each step (new_lr = old_lr * gamma)
+      COSINE:  # CosineAnnealingLR scheduler (cosine annealing schedule)
+        N_PERIODS: 0.5  # Number of cosine periods over training
+      # STEPWISE:  # StepLR scheduler (reduces LR at fixed step intervals)
+      #   N_STEPS: 4  # Number of times to reduce LR during training
+      #   GAMMA: 0.5  # Factor by which LR is reduced at each step (new_lr = old_lr * gamma)
       # EXPONENTIAL:  # ExponentialLR scheduler (exponential decay)
       #   GAMMA: 0.5  # Multiplicative factor for exponential decay
 
@@ -240,7 +245,7 @@ parameters:
 
   ### DIFFUSE HIGHLIGHT PENALTY
   WEIGHT_DIFFUSE_HIGHLIGHT_PENALTY:
-    value: 0.01 # Weight for penalty loss on highlights in diffuse decoder output (0.0 = disabled)
+    value: 0.02 # Weight for penalty loss on highlights in diffuse decoder output (0.0 = disabled)
   DIFFUSE_HL_THRESHOLD:
     value: 0.85  # Brightness/luminance threshold for detecting highlights in diffuse (0.0-1.0)
   DIFFUSE_HL_USE_CHARB:
