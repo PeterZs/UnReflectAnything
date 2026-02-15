@@ -140,7 +140,7 @@ parameters:
         HIGHLIGHT_RETURN_RECT_AS_RGB: False  # Return highlight rectangle as RGB if True
         HIGHLIGHT_RETURN_RECT: True  # Return highlight rectangle region if True
 
-  FEW_IMAGES_OVERRIDE:
+  FEW_IMAGES_ALL_DATASETS:
     value: False  # If True, override all datasets' FEW_IMAGES to True (for quick debugging across all datasets)
 
   BATCH_SIZE: # Max batch size with img size 896 is 32

@@ -164,7 +164,7 @@ def hyperparameters(config):
         "OPTIMIZER_BOOTSTRAP_NAME", "Adam"
     )  # Optimizer name for bootstrapping, default to 'Adam'
     optimizer_refining_name = config.get(
-        "OPTIMIZER_REFINING_NAME", "Adam"
+        "OPTIMIZER_REFINING_NAME", config.get("OPTIMIZER_BOOTSTRAP_NAME")
     )  # Optimizer name for refining, default to 'Adam'
     gradient_accumulation_steps = config.get(
         "GRADIENT_ACCUMULATION_STEPS", 1
@@ -179,7 +179,7 @@ def hyperparameters(config):
         "REFINEMENT_AREA", 8
     )  # SIFT patch search area, default to 3
     switch_optimizer_epoch = config.get(
-        "SWITCH_OPTIMIZER_EPOCH", 2
+        "SWITCH_OPTIMIZER_EPOCH", 100
     )  # Epoch to switch optimizer, default to 2
 
     # Phase tracking

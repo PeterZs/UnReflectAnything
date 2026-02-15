@@ -145,7 +145,7 @@ parameters:
         LOAD_RGB_ONLY: True  # Ignore polarization data if True
         
 
-  FEW_IMAGES_OVERRIDE:
+  FEW_IMAGES_ALL_DATASETS:
     value: False  # If True, override all datasets' FEW_IMAGES to True (for quick debugging across all datasets)
 
   BATCH_SIZE: # Max batch size with img size 896 is 32

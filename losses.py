@@ -40,12 +40,6 @@ class UnReflectLoss(nn.Module):
         weight_image_reconstruction: Weight for image reconstruction loss (default: 0.5)
         weight_alpha_regularization: Weight for alpha channel regularization (default: 0.0, unused)
 
-        # Saturation ring loss parameters
-        weight_saturation_ring: Weight for saturation ring consistency loss (default: 0.0)
-        ring_kernel_size: Odd kernel size for ring dilation (default: 7)
-        ring_var_weight: Weight for variance matching vs mean matching in ring loss (default: 0.5)
-        ring_texture_weight: Weight for texture consistency term in ring loss (default: 1.0)
-
         # Highlight regression config
         hlreg_w_l1: Weight for L1/Charbonnier term in highlight regression (default: 1.0)
         hlreg_use_charb: Use Charbonnier loss instead of L1 for highlight regression (default: True)
@@ -62,9 +56,7 @@ class UnReflectLoss(nn.Module):
         clamp_reconstruction: Clamp reconstructed images to [0, 1] (default: True)
 
         # Context and seam loss parameters
-        weight_context_identity: Weight for L1 loss outside holes (default: 1.0)
         weight_seam: Weight for gradient matching on ring/seam (default: 0.5)
-        weight_tv_in_hole: Weight for TV loss only inside holes (default: 1e-3)
         ring_dilate_kernel: Kernel size for ring mask dilation (default: 7)
 
         # Token-space loss parameters
@@ -92,11 +84,7 @@ class UnReflectLoss(nn.Module):
         weight_highlight_loss=1.0,
         weight_image_reconstruction=0.5,
         weight_alpha_regularization=0.0,
-        weight_saturation_ring: float = 0.0,
-        ring_kernel_size: int = 7,  # odd; dilation size for surrounding ring
-        ring_var_weight: float = 0.5,  # weight on variance matching vs mean matching
-        ring_texture_weight: float = 1.0,  # weight on texture consistency term
-        # Highlight regression config
+
         hlreg_w_l1=1.0,
         hlreg_use_charb=True,
         hlreg_w_dice=0.2,
@@ -109,9 +97,7 @@ class UnReflectLoss(nn.Module):
         # Highlight rendering
         highlight_color=(1.0, 1.0, 1.0),
         clamp_reconstruction=True,
-        weight_context_identity: float = 1.0,  # L1 outside holes
         weight_seam: float = 0.5,  # gradient match on ring
-        weight_tv_in_hole: float = 1e-3,  # TV only inside holes
         ring_dilate_kernel: int = 7,  # for ring mask
         # Token-space loss parameters
         weight_token_inpaint: float = 1.0,  # λ for token-space loss
@@ -136,18 +122,11 @@ class UnReflectLoss(nn.Module):
         self.weight_diffuse_loss = weight_diffuse_loss
         self.weight_highlight_loss = weight_highlight_loss
         self.weight_image_reconstruction = weight_image_reconstruction
-        self.weight_saturation_ring = weight_saturation_ring
-        self.ring_kernel_size = ring_kernel_size
-        self.ring_var_weight = ring_var_weight
-        self.ring_texture_weight = ring_texture_weight
-
         # Highlight rendering parameters
         self.highlight_color = torch.tensor(highlight_color, dtype=torch.float32)
         self.clamp_reconstruction = clamp_reconstruction
 
         # Context and seam loss weights
-        self.weight_context_identity = weight_context_identity
-        self.weight_tv_in_hole = weight_tv_in_hole
         self.weight_seam = weight_seam
         self.ring_dilate_kernel = ring_dilate_kernel
 
@@ -322,7 +301,7 @@ class UnReflectLoss(nn.Module):
         # Context identity loss
         # ====================================================================
         # Preserve non-hole regions: diffuse should match GT outside holes
-        if "diffuse" in prediction and self.weight_context_identity > 0:
+        if "diffuse" in prediction:
             diffuse_pred_rgb = prediction["diffuse"][:, :3]
             if "diffuse" in ground_truth:
                 diffuse_gt_rgb = ground_truth["diffuse"][:, :3]
@@ -349,18 +328,10 @@ class UnReflectLoss(nn.Module):
             # m_hole is the *inpainting* region; SeamLoss computes a ring = dilate(m_hole) - m_hole
             # so pass m_hole here (NOT m_sup)
             seam_loss = self.seam_loss_fn(D_hat, D_ref, mask=pixel_inpaint_mask)
-
-            # Optional: TV loss inside the hole for smoothness
-            if self.weight_tv_in_hole > 0:
-                tv_loss = _total_variation(D_hat * pixel_inpaint_mask)
-            else:
-                tv_loss = torch.tensor(0.0, device=D_hat.device)
         else:
             seam_loss = torch.tensor(0.0)
-            tv_loss = torch.tensor(0.0)
 
         losses["Seam"] = seam_loss if seam_loss is not None else torch.tensor(0.0)
-        losses["TVinHole"] = tv_loss if tv_loss is not None else torch.tensor(0.0)
 
         # ====================================================================
         # Token-space inpainting loss
@@ -433,10 +404,7 @@ class UnReflectLoss(nn.Module):
             total = total + self.weight_image_reconstruction * losses["Reconstruction"]
 
         # Regularization and consistency losses
-        total = total + self.weight_context_identity * losses["ContextIdentity"]
         total = total + self.weight_seam * losses["Seam"]
-        total = total + self.weight_tv_in_hole * losses["TVinHole"]
-        # total = total + self.weight_saturation_ring * losses["SaturationRing"]
         total = total + self.weight_token_inpaint * losses["TokenInpaint"]
         total = total + self.weight_diffuse_highlight_penalty * losses["HPenalty"]
 

@@ -13,16 +13,17 @@ import math
 
 import optimization
 import utilities.engine_initializers as initialize
-import utilities.system_ops as system_ops
 import wandb
 from logger import get_logger
 from losses import UnReflectLoss
 from highlight_render import HighlightRender
-import torchvision.transforms as transforms
-from utilities.visualization import panelize, rgb
+from utilities.visualization import rgb
 from utilities.ablation import Ablation
 from metrics import mse_metric, psnr_metric, ssim_metric
 from utilities.model import pixel_mask_to_patch_mask, patch_mask_to_pixel_mask
+from utilities import engine_helpers
+from utilities import engine_memory
+from utilities import engine_visualization as engine_viz
 
 ablation = Ablation(False)
 
@@ -172,11 +173,7 @@ class Engine:
             weight_diffuse_loss=self.config.DIFFUSE_LOSS_WEIGHT,
             weight_highlight_loss=self.config.HIGHLIGHT_LOSS_WEIGHT,
             weight_image_reconstruction=self.config.IMAGE_RECONSTRUCTION_LOSS_WEIGHT,
-            # Saturation ring parameters
-            weight_saturation_ring=self.config.get("SATURATION_RING_LOSS_WEIGHT", 0.0),
-            ring_kernel_size=int(self.config.get("RING_KERNEL_SIZE", 7)),
-            ring_var_weight=float(self.config.get("RING_VAR_WEIGHT", 0.5)),
-            ring_texture_weight=float(self.config.get("RING_TEXTURE_WEIGHT", 1.0)),
+
             # Highlight regression loss parameters
             hlreg_w_l1=float(self.config.get("HLREG_W_L1", 1.0)),
             hlreg_use_charb=bool(self.config.get("HLREG_USE_CHARB", True)),
@@ -191,13 +188,8 @@ class Engine:
             highlight_color=tuple(self.config.get("HIGHLIGHT_COLOR", [1.0, 1.0, 1.0])),
             clamp_reconstruction=bool(self.config.get("CLAMP_RECONSTRUCTION", True)),
             # Context and regularization weights
-            weight_context_identity=float(
-                self.config.get("WEIGHT_CONTEXT_IDENTITY", 0.0)
-            ),
             weight_seam=float(self.config.get("WEIGHT_SEAM", 0.5)),
-            weight_tv_in_hole=float(self.config.get("WEIGHT_TV_IN_HOLE", 0.0)),
             ring_dilate_kernel=int(self.config.get("RING_DILATE_KERNEL", 7)),
-            # Seam loss parameters
             seam_use_charb=bool(self.config.get("SEAM_USE_CHARB", True)),
             seam_weight_grad=float(self.config.get("SEAM_WEIGHT_GRAD", 0.2)),
             # Token-space loss parameters
@@ -249,43 +241,19 @@ class Engine:
     ) -> torch.Tensor:
         """
         Composite specular and diffuse components into a reconstructed image.
-        Optimized for memory efficiency with strategic cleanup.
 
         Args:
             specular (torch.Tensor): Specular component [B, C, H, W]
             diffuse (torch.Tensor): Diffuse component [B, C, H, W]
 
         Returns:
-            torch.Tensor: Reconstructed image [B, 3, H, W] or [B, 4, H, W]
+            torch.Tensor: Reconstructed image [B, 3, H, W]
         """
-        # Log memory usage before compositing if monitoring is enabled
         if self.memory_monitoring:
-            self._log_memory_usage("Before compositing")
-
-        if specular.shape[1] == 4 and diffuse.shape[1] == 4:  # RGBA format
-            # For RGBA, use alpha compositing with diffuse as background, specular as foreground
-            spec_rgb = specular[:, :3]  # [B, 3, H, W] - foreground RGB
-            spec_alpha = specular[:, 3:4]  # [B, 1, H, W] - foreground alpha
-            diff_rgb = diffuse[:, :3]  # [B, 3, H, W] - background RGB
-            diff_alpha = diffuse[:, 3:4]  # [B, 1, H, W] - background alpha
-
-            # Alpha compositing: C_out = C_fg * α_fg + C_bg * α_bg * (1 - α_fg)
-            # Final alpha: α_out = α_fg + α_bg * (1 - α_fg)
-            recon_rgb = spec_rgb * spec_alpha + diff_rgb * diff_alpha * (1 - spec_alpha)
-            recon_alpha = spec_alpha + diff_alpha * (1 - spec_alpha)
-            recon_alpha = torch.clamp(recon_alpha, 0, 1)
-
-            # Clean up intermediate tensors to free memory
-            del spec_rgb, spec_alpha, diff_rgb, diff_alpha
-            torch.cuda.empty_cache()
-
-            return recon_rgb
-        else:  # RGB format
-            # Simple addition for RGB
-            recon = specular + diffuse  # [B, 3, H, W]
-            recon = recon / recon.max()
-            recon = torch.clamp(recon, 0, 1)
-            return recon
+            engine_memory.log_memory_usage(
+                self.logger, "Before compositing", self.memory_monitoring
+            )
+        return engine_helpers.composite_specular_diffuse(specular, diffuse)
 
     def trainloop(self):
         """
@@ -1268,7 +1236,7 @@ class Engine:
                         pred_decomposition,
                         gt_data,
                         as_single_panel=True,
-                        also_save_individual_images=True,
+                        also_save_individual_images=False,
                         batch_idx=batch_idx,
                         phase=phase,
                         test_idx=test_idx if phase == "Test" else None,
@@ -1471,301 +1439,34 @@ class Engine:
     ):
         """
         Creates visualization images for polarization-based reflection removal training.
-        Optimized for memory efficiency with aggressive cleanup.
 
         Args:
-            gt_decomposition (dict): Input gt_decomposition containing rgb, AoP, DoP, f_spec
-            pred_decomposition (dict): Model output containing specular, diffuse, recon
+            gt_decomposition (dict): Ground truth decomposition (rgb, AoP, DoP, etc.)
+            pred_decomposition (dict): Model output (specular, diffuse, recon, etc.)
             sample (dict): Original sample from dataset
-            as_single_panel (bool): Whether to create a single panel image
+            as_single_panel (bool): Whether to create a single comparison panel
             batch_idx (int): Batch index to visualize
             phase (str): Phase name (Training/Validation/Test)
             test_idx (Optional[int]): Test index for Test phase
-            also_save_individual_images (bool): If True and as_single_panel=True, also save
-                key individual images separately in addition to the panel
+            also_save_individual_images (bool): Also save key images separately
 
         Returns:
             dict: Dictionary of wandb.Image objects for visualization
         """
-        if as_single_panel:
-            visualization_dict = {}
+        def add_image_fn(viz_dict, key, tensor, caption, bi, ph, ti):
+            self._add_image_safely(viz_dict, key, tensor, caption, bi, ph, ti)
 
-            # Collect all unique keys from both dicts
-            all_keys = list(
-                sorted(set(pred_decomposition.keys()) | set(gt_decomposition.keys()))
-            )
-
-            def make_black_image(size=(448, 448)):
-                # Returns a black RGB image tensor [3, H, W]
-                return torch.zeros(3, size[0], size[1])
-
-            # Helper to safely extract an image tensor in CHW form
-            def _prepare_img_tensor(t: torch.Tensor) -> tuple[torch.Tensor, bool]:
-                """
-                Returns (tensor_CHW, is_grayscale) where tensor_CHW is [C,H,W] with C in {1,3}.
-                """
-                if not isinstance(t, torch.Tensor):
-                    return None, False
-                x = t
-                # Reduce batch if present
-                if x.dim() == 4:  # [B,C,H,W] or [B,H,W]
-                    x = x[0]
-                # If 2D -> add channel
-                if x.dim() == 2:  # [H,W]
-                    x = x.unsqueeze(0)
-                # Handle channel-last rare case
-                if x.dim() == 3 and x.shape[0] > 4 and x.shape[-1] <= 4:
-                    x = x.permute(2, 0, 1)
-                # Now assume CHW
-                if x.dim() != 3:
-                    return None, False
-                C = x.shape[0]
-                if C >= 3:
-                    return x[:3].detach(), False
-                else:
-                    return x[:1].detach(), True
-
-            # Build prediction row, using black image if key missing
-            prediction_row = panelize(
-                *[
-                    (
-                        lambda _t: rgb(
-                            _t[0] if _t[0] is not None else make_black_image(),
-                            as_tensor=True,
-                            resize=(448, 448),
-                            colormap=("gray" if _t[1] else None),
-                            label={
-                                "position": "top-left",
-                                "height": 40,
-                                "margin": 1
-                                if comp_name not in pred_decomposition
-                                else 0,
-                                "text": (
-                                    f"PRED {comp_name.capitalize()}"
-                                    if comp_name in pred_decomposition
-                                    else "NA"
-                                ),
-                            },
-                        )
-                    )(
-                        _prepare_img_tensor(
-                            pred_decomposition[comp_name]
-                            if comp_name in pred_decomposition
-                            else None
-                        )
-                    )
-                    for comp_name in all_keys
-                ],
-                mode="horizontal",
-            )
-
-            # Build GT row, using black image if key missing
-            gt_row = panelize(
-                *[
-                    (
-                        lambda _t: rgb(
-                            _t[0] if _t[0] is not None else make_black_image(),
-                            as_tensor=True,
-                            resize=(448, 448),
-                            colormap=("gray" if _t[1] else None),
-                            label={
-                                "position": "top-left",
-                                "height": 40,
-                                "margin": 1 if comp_name not in gt_decomposition else 0,
-                                "text": (
-                                    f"GT {comp_name.capitalize()}"
-                                    if comp_name in gt_decomposition
-                                    else "NA"
-                                ),
-                            },
-                        )
-                    )(
-                        _prepare_img_tensor(
-                            gt_decomposition[comp_name]
-                            if comp_name in gt_decomposition
-                            else None
-                        )
-                    )
-                    for comp_name in all_keys
-                ],
-                mode="horizontal",
-            )
-
-            prediction_panel_loggable = panelize(
-                prediction_row, gt_row, mode="vertical", resize_to_match=False
-            )
-            self._add_image_safely(
-                visualization_dict,
-                "images/Comparison_panel",
-                prediction_panel_loggable,
-                caption="Comparison Panel",
-                batch_idx=batch_idx,
-                phase=phase,
-                test_idx=test_idx,
-            )
-
-            # Optionally also save individual images separately
-            if also_save_individual_images:
-                # Save key predicted components
-                if "recon" in pred_decomposition:
-                    self._add_image_safely(
-                        visualization_dict,
-                        "images/PRED_Reconstruction",
-                        pred_decomposition["recon"],
-                        "Reconstruction",
-                        batch_idx,
-                        phase=phase,
-                        test_idx=test_idx,
-                    )
-
-                # Save other important predicted components
-                priority_pred_keys = ["specular", "diffuse", "AoP", "DoP"]
-                for comp_name in priority_pred_keys:
-                    if (
-                        comp_name in pred_decomposition
-                        and isinstance(pred_decomposition[comp_name], torch.Tensor)
-                        and pred_decomposition[comp_name].dim() == 4
-                    ):
-                        display_name = comp_name.replace("_", " ").title()
-                        wandb_key = f"images/PRED_{comp_name.capitalize()}"
-                        caption = f"Predicted {display_name} Component"
-                        self._add_image_safely(
-                            visualization_dict,
-                            wandb_key,
-                            pred_decomposition[comp_name],
-                            caption,
-                            batch_idx,
-                            phase=phase,
-                            test_idx=test_idx,
-                        )
-
-                # Save key ground truth components
-                priority_gt_keys = ["diffuse", "rgb_highlighted", "specular"]
-                for tensor_key in priority_gt_keys:
-                    if (
-                        tensor_key in gt_decomposition
-                        and gt_decomposition[tensor_key] is not None
-                        and isinstance(gt_decomposition[tensor_key], torch.Tensor)
-                        and gt_decomposition[tensor_key].dim() == 4
-                    ):
-                        key_map = {
-                            "diffuse": ("images/GT_Diffuse", "Input RGB Image"),
-                            "rgb_highlighted": (
-                                "images/GT_RGB_Highlighted",
-                                "Input RGB Highlighted Image",
-                            ),
-                            "specular": ("images/GT_Specular", "Ground Truth Specular"),
-                        }
-                        if tensor_key in key_map:
-                            key, caption = key_map[tensor_key]
-                            self._add_image_safely(
-                                visualization_dict,
-                                key,
-                                gt_decomposition[tensor_key],
-                                caption,
-                                batch_idx,
-                                phase=phase,
-                                test_idx=test_idx,
-                            )
-
-            return visualization_dict
-        else:
-            # Create visualization dictionary
-            visualization_dict = {}
-
-            # Predicted components - dynamically detect available components
-            # First add known special components
-            if "recon" in pred_decomposition:
-                self._add_image_safely(
-                    visualization_dict,
-                    "images/PRED_Reconstruction",
-                    pred_decomposition["recon"],
-                    "Reconstruction",
-                    batch_idx,
-                    phase=phase,
-                    test_idx=test_idx,
-                )
-
-            # Then add any other model output components
-            for comp_name, comp_tensor in pred_decomposition.items():
-                if (
-                    comp_name != "recon"
-                    and isinstance(comp_tensor, torch.Tensor)
-                    and comp_tensor.dim() == 4
-                ):
-                    # Create nice display name
-                    display_name = comp_name.replace("_", " ").title()
-                    wandb_key = f"images/PRED_{comp_name.capitalize()}"
-                    caption = f"Predicted {display_name} Component"
-                    self._add_image_safely(
-                        visualization_dict,
-                        wandb_key,
-                        comp_tensor,
-                        caption,
-                        batch_idx,
-                        phase=phase,
-                        test_idx=test_idx,
-                    )
-
-            # Input images
-            input_images = [
-                ("images/GT_Diffuse", "diffuse", "Input RGB Image"),
-                (
-                    "images/GT_RGB_Highlighted",
-                    "rgb_highlighted",
-                    "Input RGB Highlighted Image",
-                ),
-                ("images/GT_Highlight", "highlight", "Input RGB Highlighted Image"),
-            ]
-
-            for key, tensor_key, caption in input_images:
-                if (
-                    tensor_key in gt_decomposition
-                    and gt_decomposition[tensor_key] is not None
-                ):
-                    self._add_image_safely(
-                        visualization_dict,
-                        key,
-                        gt_decomposition[tensor_key],
-                        caption,
-                        batch_idx,
-                        phase=phase,
-                        test_idx=test_idx,
-                    )
-
-            # Ground truth components - dynamically detect available components
-            if sample is not None:
-                # Add ground truth components dynamically
-                for comp_name, comp_tensor in sample.items():
-                    # Skip non-component keys
-                    if comp_name in [
-                        "rgb",
-                        "f_spec",
-                        "rgb_highlighted",
-                        "intrinsics",
-                        "supervision_mask",
-                    ] or not isinstance(comp_tensor, torch.Tensor):
-                        continue
-
-                    # Create nice display name
-                    display_name = comp_name.replace("_", " ").title()
-                    wandb_key = f"images/GT_{comp_name.capitalize()}"
-                    caption = f"Ground Truth {display_name}"
-                    self._add_image_safely(
-                        visualization_dict,
-                        wandb_key,
-                        comp_tensor,
-                        caption,
-                        batch_idx,
-                        phase=phase,
-                        test_idx=test_idx,
-                    )
-
-            # Final cleanup
-            torch.cuda.empty_cache()
-            gc.collect()
-
-            return visualization_dict
+        return engine_viz.create_visualization_images(
+            gt_decomposition,
+            pred_decomposition,
+            sample,
+            add_image_fn,
+            as_single_panel=as_single_panel,
+            batch_idx=batch_idx,
+            phase=phase,
+            test_idx=test_idx,
+            also_save_individual_images=also_save_individual_images,
+        )
 
     def reinstantiate_model_from_checkpoint(self, checkpoint_path=None):
         """
@@ -1878,73 +1579,9 @@ class Engine:
             device (torch.device, optional): Device to load the model on
 
         Returns:
-            tuple: (model, optimizer, scheduler, epoch, config) or None if loading fails
+            dict with keys model, optimizer_state_dict, epoch, config, etc., or None if loading fails
         """
-        if not os.path.exists(checkpoint_path):
-            print(f"Checkpoint not found at {checkpoint_path}")
-            return None
-
-        try:
-            if not os.path.exists(checkpoint_path):
-                # Try swapping .pth <-> .pt if file not found
-                if checkpoint_path.endswith(".pt"):
-                    alt_checkpoint_path = checkpoint_path[:-3] + ".pth"
-                elif checkpoint_path.endswith(".pth"):
-                    alt_checkpoint_path = checkpoint_path[:-4] + ".pt"
-                else:
-                    alt_checkpoint_path = None
-
-                if alt_checkpoint_path and os.path.exists(alt_checkpoint_path):
-                    checkpoint_path = alt_checkpoint_path
-                else:
-                    return None
-
-            checkpoint = torch.load(
-                checkpoint_path, map_location=device, weights_only=False
-            )
-
-            # Extract model class information
-            model_class_name = checkpoint.get("model_class_name")
-            model_class_module = checkpoint.get("model_class_module")
-
-            if model_class_name and model_class_module:
-                # Dynamically import the model class
-                import importlib
-
-                module = importlib.import_module(model_class_module)
-                model_class = getattr(module, model_class_name)
-
-                # Create model instance (you may need to pass config or other parameters)
-                # This is a basic implementation - you might need to adapt based on your model's __init__
-                model = model_class()
-
-                # Load state dict
-                model.load_state_dict(checkpoint["model_state_dict"])
-
-                if device:
-                    model = model.to(device)
-
-                return {
-                    "model": model,
-                    "optimizer_state_dict": checkpoint.get("optimizer_state_dict"),
-                    # Expose both new and legacy scheduler keys for callers
-                    "LRscheduler_state_dict": checkpoint.get("LRscheduler_state_dict"),
-                    "LRschedulerPlateau_state_dict": checkpoint.get(
-                        "LRschedulerPlateau_state_dict"
-                    ),
-                    "scheduler_state_dict": checkpoint.get("scheduler_state_dict"),
-                    "epoch": checkpoint.get("epoch"),
-                    "config": checkpoint.get("config"),
-                    "model_class_name": model_class_name,
-                    "model_class_module": model_class_module,
-                }
-            else:
-                print("Warning: Model class information not found in checkpoint")
-                return None
-
-        except Exception as e:
-            print(f"Error loading checkpoint: {e}")
-            return None
+        return engine_helpers.create_model_from_checkpoint(checkpoint_path, device)
 
     def resume_from_run(self, run_identifier: str) -> bool:
         """
@@ -2192,118 +1829,45 @@ class Engine:
         )
 
     def _log_memory_usage(self, context: str = ""):
-        """Log current GPU memory usage for monitoring"""
-        if self.memory_monitoring and torch.cuda.is_available():
-            allocated = torch.cuda.memory_allocated() / 1024**3  # GB
-            reserved = torch.cuda.memory_reserved() / 1024**3  # GB
-            self.logger.info(
-                f"GPU Memory - {context}: Allocated: {allocated:.2f}GB, Reserved: {reserved:.2f}GB"
-            )
+        """Log current GPU memory usage for monitoring."""
+        engine_memory.log_memory_usage(
+            self.logger, context, self.memory_monitoring
+        )
 
     def _aggressive_memory_cleanup(self, exclude_vars: list = None):
-        """
-        Perform aggressive memory cleanup using the gpuClean utility.
-
-        Args:
-            exclude_vars (list): Variables to exclude from cleanup
-        """
-        if not self.aggressive_cleanup:
-            return
-
-        try:
-            # Use the existing gpuClean utility
-            freed_count, memory_freed = system_ops.gpuClean(
-                frame_up=1, exclude_vars=exclude_vars or [], verbose=False
-            )
-
-            if self.memory_monitoring and freed_count > 0:
-                self.logger.info(
-                    f"Memory cleanup: Freed {freed_count} tensors, {memory_freed:.2f}MB"
-                )
-
-        except Exception as e:
-            self.logger.warning(f"Memory cleanup failed: {e}")
+        """Perform aggressive memory cleanup using the gpuClean utility."""
+        engine_memory.aggressive_memory_cleanup(
+            self.logger,
+            self.aggressive_cleanup,
+            self.memory_monitoring,
+            exclude_vars,
+        )
 
     def _strategic_memory_cleanup(
         self, phase: str, batch_idx: int, exclude_vars: list = None
     ):
-        """
-        Perform strategic memory cleanup based on training phase and batch index.
-
-        Args:
-            phase (str): Current phase (Training, Validation, Test)
-            batch_idx (int): Current batch index
-            exclude_vars (list): Variables to exclude from cleanup
-        """
-        # Clean up every N batches or at specific intervals
-        should_cleanup = batch_idx % self.memory_cleanup_frequency == 0 or (
-            phase == "Training" and batch_idx % (self.memory_cleanup_frequency * 2) == 0
+        """Perform strategic memory cleanup based on phase and batch index."""
+        engine_memory.strategic_memory_cleanup(
+            phase,
+            batch_idx,
+            self.memory_cleanup_frequency,
+            self.logger,
+            self.aggressive_cleanup,
+            self.memory_monitoring,
+            exclude_vars,
         )
 
-        if should_cleanup:
-            self._aggressive_memory_cleanup(exclude_vars)
-
     def _cleanup_tensor_dict(self, tensor_dict: dict, keys_to_keep: list = None):
-        """
-        Clean up a dictionary of tensors, optionally keeping specified keys.
-
-        Args:
-            tensor_dict (dict): Dictionary containing tensors
-            keys_to_keep (list): Keys to preserve in the dictionary
-        """
-        if tensor_dict is None:
-            return
-
-        keys_to_keep = keys_to_keep or []
-        keys_to_delete = [k for k in tensor_dict.keys() if k not in keys_to_keep]
-
-        for key in keys_to_delete:
-            if isinstance(tensor_dict[key], torch.Tensor):
-                tensor_dict[key].detach_()
-                if tensor_dict[key].is_cuda:
-                    tensor_dict[key].cpu()
-                del tensor_dict[key]
-            elif isinstance(tensor_dict[key], dict):
-                self._cleanup_tensor_dict(tensor_dict[key])
-                del tensor_dict[key]
+        """Clean up a dictionary of tensors, optionally keeping specified keys."""
+        engine_helpers.cleanup_tensor_dict(tensor_dict, keys_to_keep)
 
     def _prepare_metrics_for_wandb(self, metrics, phase):
-        """Simple fallback for metrics formatting"""
-        formatted_metrics = {}
-        for k, v in metrics.items():
-            if "Step" in k:
-                # Keep Step metrics unchanged
-                formatted_metrics[k] = v
-            else:
-                # Add phase prefix to non-Step metrics
-                formatted_metrics[f"{phase}/{k}"] = v
-        return formatted_metrics
+        """Format metrics with phase prefix for wandb."""
+        return engine_helpers.prepare_metrics_for_wandb(metrics, phase)
 
     def _to_cpu_image(self, tensor, batch_idx=0):
-        """Convert tensor to PIL Image with memory optimization"""
-        if tensor is None:
-            return None
-
-        # Handle different tensor dimensions
-        if tensor.dim() == 4:  # [B, C, H, W]
-            tensor = tensor[batch_idx].clone()
-        elif tensor.dim() == 3:  # [C, H, W]
-            tensor = tensor.clone()
-        elif tensor.dim() == 2:  # [H, W] - single channel
-            tensor = tensor.unsqueeze(0).clone()
-
-        # Convert to CPU and detach immediately
-        tensor = tensor.cpu().detach().clamp(0, 1)
-
-        # Convert to PIL Image
-        to_pil = transforms.ToPILImage()
-        pil_image = to_pil(tensor)
-
-        # Clean up tensor immediately
-        del tensor
-        torch.cuda.empty_cache()
-
-        return pil_image
+        """Convert tensor to PIL Image with memory optimization."""
+        return engine_helpers.to_cpu_image(tensor, batch_idx)
 
     def _add_image_safely(
         self,
@@ -2315,42 +1879,17 @@ class Engine:
         phase: str = None,
         test_idx: Optional[int] = None,
     ):
-        """Safely add image to visualization dictionary"""
-
-        image = wandb.Image(self._to_cpu_image(tensor))
-        # Construct logging key with phase prefixing
-        log_key = key
-        if isinstance(phase, str):
-            # Highest precedence: Test with explicit index
-            if phase == "Test" and test_idx is not None:
-                if key.startswith("Test/") and not key.startswith(
-                    f"Test/test_idx_{test_idx}/"
-                ):
-                    # Upgrade existing Test/ prefix to include test_idx
-                    log_key = key.replace("Test/", f"Test/test_idx_{test_idx}/", 1)
-                elif not key.startswith(f"Test/test_idx_{test_idx}/"):
-                    log_key = f"Test/test_idx_{test_idx}/{key}"
-            else:
-                # Generic phase prefix for Training/Validation/Test
-                if not key.startswith(("Training/", "Validation/", "Test/")):
-                    log_key = f"{phase}/{key}"
-        viz_dict[log_key] = image
-        payload = {log_key: image}
-        # Attach step index for grouping if available
-        if phase == "Test" and test_idx is not None:
-            payload["Step/test_idx"] = int(test_idx)
-        elif (
-            not self.metrics["Test"].empty
-            and "Step/test_idx" in self.metrics["Test"].columns
-        ):
-            # Fallback: infer last test_idx from metrics table
-            try:
-                payload["Step/test_idx"] = int(
-                    self.metrics["Test"]["Step/test_idx"].iloc[-1]
-                )
-            except Exception:
-                pass
-        wandb.log(payload)
+        """Add image to viz dict and log to wandb with phase/test_idx prefixing."""
+        engine_helpers.add_image_safely(
+            viz_dict,
+            key,
+            tensor,
+            caption,
+            batch_idx,
+            phase,
+            test_idx,
+            self.metrics["Test"] if "Test" in self.metrics else None,
+        )
 
     def _load_and_increment_test_index(self) -> int:
         """Load current test index from RUN_DIR and increment it for next test.

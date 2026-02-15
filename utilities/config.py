@@ -14,9 +14,12 @@ import json
 logger = get_logger(__name__).set_context("CONFIG")
 
 # Allowed values for DISTRIBUTE (training distribution mode)
-DISTRIBUTE_SINGLEGPU = "single"
+DISTRIBUTE_SINGLEGPU = "singlegpu"
 DISTRIBUTE_DP = "dp"
 DISTRIBUTE_DDP = "ddp"
+
+# Reserved key under DATASETS: dict of key-value overrides applied to every dataset; per-dataset keys take precedence
+ALL_DATASETS_KEY = "ALL_DATASETS"
 
 
 def resolve_distribute(config: DotMap) -> None:
@@ -34,9 +37,11 @@ def resolve_distribute(config: DotMap) -> None:
     if distribute_entry is not None:
         normalized = str(distribute_entry).strip().lower()
         if normalized not in (DISTRIBUTE_SINGLEGPU, DISTRIBUTE_DP, DISTRIBUTE_DDP):
-            raise ValueError(
+            logger.warning(
                 f"DISTRIBUTE must be one of 'singlegpu', 'DP', 'DDP'; got {distribute_entry!r}"
             )
+            logger.warning(f"Setting DISTRIBUTE to safe {DISTRIBUTE_SINGLEGPU}")
+            config["DISTRIBUTE"] = DISTRIBUTE_SINGLEGPU
         config["DISTRIBUTE"] = normalized
         
     return config
@@ -128,22 +133,22 @@ def create_model_from_config(
     }
 
     # POL Encoder configuration
-    pol_encoder_config = model_config.get("POL_ENCODER", {})
-    pol_enc_cfg = {
-        "in_ch": 3,
-        "embed_dim": pol_encoder_config.get("EMBED_DIM", 384),
-        "depth": pol_encoder_config.get("DEPTH", 4),
-        "n_heads": pol_encoder_config.get("N_HEADS", 12),
-        "patch_size": pol_encoder_config.get("PATCH_SIZE", 16),
-    }
-    # Cross-attention configuration
-    cross_attn_config = model_config.get("CROSS_ATTN", {})
-    cross_attn_cfg = {
-        "embed_dim": cross_attn_config.get("EMBED_DIM", 384),
-        "n_heads": cross_attn_config.get("N_HEADS", 12),
-        "dropout": cross_attn_config.get("DROPOUT", 0.1),
-        "bi_directional": cross_attn_config.get("BI_DIRECTIONAL", False),
-    }
+    # pol_encoder_config = model_config.get("POL_ENCODER", {})
+    # pol_enc_cfg = {
+    #     "in_ch": 3,
+    #     "embed_dim": pol_encoder_config.get("EMBED_DIM", 384),
+    #     "depth": pol_encoder_config.get("DEPTH", 4),
+    #     "n_heads": pol_encoder_config.get("N_HEADS", 12),
+    #     "patch_size": pol_encoder_config.get("PATCH_SIZE", 16),
+    # }
+    # # Cross-attention configuration
+    # cross_attn_config = model_config.get("CROSS_ATTN", {})
+    # cross_attn_cfg = {
+    #     "embed_dim": cross_attn_config.get("EMBED_DIM", 384),
+    #     "n_heads": cross_attn_config.get("N_HEADS", 12),
+    #     "dropout": cross_attn_config.get("DROPOUT", 0.1),
+    #     "bi_directional": cross_attn_config.get("BI_DIRECTIONAL", False),
+    # }
 
     # Decoder configuration - support both flexible and legacy formats
     decoders_config = model_config.get("DECODERS", None)
@@ -338,6 +343,8 @@ def create_datasets_from_config(
     Reads from YAML config DATASETS section. Identity defaults (ROOT_DIR,
     RGB_EXT, POLARIZATION_FORMAT, etc.) are taken from dataset.wrappers.DATASET_DEFAULTS;
     YAML overrides only what varies (TARGET_SIZE, VAL_SCENES, RESIZE_MODE, etc.).
+    If DATASETS contains a reserved key ALL_DATASETS (dict), its key-value pairs
+    are applied as overrides to every dataset; per-dataset keys take precedence.
 
     Logic:
     - VAL_SCENES: defines which scenes to use for validation
@@ -378,14 +385,19 @@ def create_datasets_from_config(
 
     try:
         global_config = config
+        datasets_config = config.DATASETS
+        all_overrides = {}
+        if isinstance(datasets_config, dict) and datasets_config is not None:
+            _ao = datasets_config.get(ALL_DATASETS_KEY)
+            if isinstance(_ao, dict):
+                all_overrides = _ao
         if dataset_names is None:
             dataset_names = []
-            datasets_config = config.DATASETS
             if isinstance(datasets_config, dict) and datasets_config is not None:
                 dataset_names = [
                     name
                     for name in datasets_config.keys()
-                    if isinstance(datasets_config[name], dict)
+                    if name != ALL_DATASETS_KEY and isinstance(datasets_config[name], dict)
                 ]
 
         if not dataset_names:
@@ -411,9 +423,11 @@ def create_datasets_from_config(
                     f"Dataset '[orange1]{dataset_name}[/]' has no dict config. Skipping."
                 )
                 continue
+            # Merge ALL_DATASETS overrides first, then per-dataset (per-dataset takes precedence)
+            effective_config = {**all_overrides, **dataset_config}
 
             def get_config_value(param_name, default_value):
-                dataset_value = dataset_config.get(param_name)
+                dataset_value = effective_config.get(param_name)
                 if dataset_value is not None:
                     return dataset_value
                 global_param = global_config.get(param_name, {})
@@ -468,8 +482,8 @@ def create_datasets_from_config(
                 except Exception:
                     dataset_params["highlight_rect_size"] = None
 
-            dataset_train_scenes = dataset_config.get("TRAIN_SCENES", [])
-            dataset_val_scenes = dataset_config.get("VAL_SCENES", [])
+            dataset_train_scenes = effective_config.get("TRAIN_SCENES", [])
+            dataset_val_scenes = effective_config.get("VAL_SCENES", [])
 
             val_scenes = (
                 global_val_scenes
@@ -494,7 +508,7 @@ def create_datasets_from_config(
                 )
 
             dataset_class = _resolve_dataset_class(
-                global_config, dataset_name, dataset_config
+                global_config, dataset_name, effective_config
             )
 
             if train_scenes is not None and len(train_scenes) > 0:
@@ -694,12 +708,16 @@ def load_and_process_config(
     # Convert the configuration dictionary to a DotMap for easy access
     config = DotMap(config_dict)
 
-    # Override FEW_IMAGES for all datasets if FEW_IMAGES_OVERRIDE is True
-    if getattr(config, "FEW_IMAGES_OVERRIDE", False):
-        for dataset_name, dataset_config in config.DATASETS.items():
-            if isinstance(dataset_config, dict):
-                dataset_config["FEW_IMAGES"] = True
-        logger.info("FEW_IMAGES_OVERRIDE enabled - loading few images for all datasets")
+    # Override FEW_IMAGES for all datasets if FEW_IMAGES_ALL_DATASETS is True (legacy; prefer ALL_DATASETS.FEW_IMAGES in DATASETS)
+    if getattr(config, "FEW_IMAGES_ALL_DATASETS", False):
+        _fav = getattr(config.FEW_IMAGES_ALL_DATASETS, "value", config.FEW_IMAGES_ALL_DATASETS)
+        if _fav:
+            for dataset_name, dataset_config in config.DATASETS.items():
+                if dataset_name == ALL_DATASETS_KEY:
+                    continue
+                if isinstance(dataset_config, dict):
+                    dataset_config["FEW_IMAGES"] = True
+            logger.info("FEW_IMAGES_ALL_DATASETS enabled - loading few images for all datasets")
 
     # Override parameters if boot mode is enabled
     if boot_mode:
@@ -709,6 +727,8 @@ def load_and_process_config(
         config.USE_TORCH_COMPILE = False
         # Set FEW_IMAGES to True for all datasets in boot mode
         for dataset_name, dataset_config in config.DATASETS.items():
+            if dataset_name == ALL_DATASETS_KEY:
+                continue
             if isinstance(dataset_config, dict):
                 dataset_config["FEW_IMAGES"] = True
         logger.info("Boot mode enabled - using minimal parameters for quick testing")

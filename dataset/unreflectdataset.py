@@ -220,7 +220,7 @@ class UnReflectAnything_Dataset(Dataset):
         current_size = tensor.shape[-2:]  # [H, W]
 
         if self.resize_mode == "crop":
-            # Center crop to target size
+            # Center crop when larger than target; pad when smaller so output is always target_size
             if current_size[0] > target_size[0]:
                 start_h = (current_size[0] - target_size[0]) // 2
                 end_h = start_h + target_size[0]
@@ -229,6 +229,21 @@ class UnReflectAnything_Dataset(Dataset):
                 start_w = (current_size[1] - target_size[1]) // 2
                 end_w = start_w + target_size[1]
                 tensor = tensor[..., :, start_w:end_w]
+            # If any dimension is still smaller than target, pad to target_size (avoids 896x1 / 1x896)
+            size_after_crop = tensor.shape[-2:]
+            pad_h = max(0, target_size[0] - size_after_crop[0])
+            pad_w = max(0, target_size[1] - size_after_crop[1])
+            if pad_h > 0 or pad_w > 0:
+                pad_left = pad_w // 2
+                pad_right = pad_w - pad_left
+                pad_top = pad_h // 2
+                pad_bottom = pad_h - pad_top
+                tensor = F.pad(
+                    tensor,
+                    (pad_left, pad_right, pad_top, pad_bottom),
+                    mode="constant",
+                    value=0,
+                )
 
         elif self.resize_mode == "resize":
             # Resize to target size using bilinear interpolation
@@ -243,6 +258,9 @@ class UnReflectAnything_Dataset(Dataset):
             # Resize to fit target size while maintaining aspect ratio, then center crop
             target_h, target_w = target_size
             current_h, current_w = current_size
+            # Guard against degenerate dimensions (avoid div-by-zero and 0-size interpolate)
+            current_h = max(1, current_h)
+            current_w = max(1, current_w)
 
             # Calculate scale factor to fit the image into target size
             scale_h = target_h / current_h
@@ -251,9 +269,10 @@ class UnReflectAnything_Dataset(Dataset):
                 scale_h, scale_w
             )  # Use max to ensure we can crop to target size
 
-            # Calculate intermediate size after scaling
-            intermediate_h = int(current_h * scale)
-            intermediate_w = int(current_w * scale)
+            # Intermediate size must be >= target so center crop yields exactly target_size
+            # (avoids [3,896,1] when int() rounds down or image has one dim very small)
+            intermediate_h = max(target_h, max(1, int(current_h * scale)))
+            intermediate_w = max(target_w, max(1, int(current_w * scale)))
 
             # Resize to intermediate size
             tensor = F.interpolate(
@@ -263,7 +282,7 @@ class UnReflectAnything_Dataset(Dataset):
                 align_corners=False,
             ).squeeze(0)  # Remove batch dimension
 
-            # Center crop to target size
+            # Center crop to target size (valid because intermediate >= target)
             start_h = (intermediate_h - target_h) // 2
             end_h = start_h + target_h
             start_w = (intermediate_w - target_w) // 2
@@ -926,7 +945,7 @@ class UnReflectAnything_Dataset(Dataset):
             else:
                 raw_data = self._load_raw_only(raw_path)
             sample = {**raw_data, "intrinsics": intrinsics}
-
+        original_raw_size = sample["raw"].shape
         # Optional highlight detection and cropping on full resolution
         if self.highlight_enabled and "raw" in sample:
             raw_chw = sample["raw"]  # Full resolution RAW
@@ -1059,7 +1078,7 @@ class UnReflectAnything_Dataset(Dataset):
         if self.return_metadata:
             metadata = {
                 "raw_path": raw_path,
-                "orig_size": torch.tensor(sample["raw"].shape[-2:]),
+                "orig_size": torch.tensor(original_raw_size),
                 # "pol_path": pol_path,
                 # "intrinsics_path": intrinsics_path,
             }
