@@ -56,6 +56,7 @@ class UnReflectAnything_Dataset(Dataset):
         rgb_dir_name: str = "rgb",
         pol_dir_name: str = "pol",
         diffuse_dir_name: str = "diffuse",
+        highlight_dir_name: str = "highlight",
         intrinsics_file_name: str = "intrinsics.txt",
         # Polarization data format
         # Image sizing parameters
@@ -84,6 +85,8 @@ class UnReflectAnything_Dataset(Dataset):
         load_rgb_only: bool = False,  # Force loading only RGB data, ignore polarization
         # Return file paths in output
         return_metadata: bool = True,  # If True, include file paths in returned dictionary
+        # Paired highlight images (grayscale, same name as diffuse in highlight_dir)
+        load_paired_highlights: bool = False,
         # Deprecated parameters (for backward compatibility)
         # Highlight detection (optional)
         highlight_enable: bool = False,
@@ -101,9 +104,11 @@ class UnReflectAnything_Dataset(Dataset):
         self.transform = transform
         self.load_rgb_only = load_rgb_only
         self.return_metadata = return_metadata
+        self.load_paired_highlights = load_paired_highlights
         self.rgb_dir_name = rgb_dir_name
         self.pol_dir_name = pol_dir_name
         self.diffuse_dir_name = diffuse_dir_name
+        self.highlight_dir_name = highlight_dir_name
         self.intrinsics_file_name = intrinsics_file_name
 
         # Polarization format validation
@@ -408,17 +413,20 @@ class UnReflectAnything_Dataset(Dataset):
 
     def _find_scene_pairs(
         self,
-    ) -> List[Tuple[str, Optional[str], Optional[str], Optional[str], bool]]:
+    ) -> List[
+        Tuple[str, Optional[str], Optional[str], Optional[str], bool, Optional[str]]
+    ]:
         """
-        Find matching RAW (RGB), optional diffuse, polarization, and intrinsics entries per scene.
+        Find matching RAW (RGB), optional diffuse, polarization, intrinsics, and optional highlight entries per scene.
 
         Scans the root directory structure to find corresponding files:
         - RGB images in rgb/ subdirectory
         - Polarization data in pol/ subdirectory (optional)
         - Camera intrinsics in intrinsics/ subdirectory (optional)
+        - Highlight grayscale images in highlight/ subdirectory (optional, paired with rgb/diffuse by filename)
 
         Returns:
-            List of tuples (raw_path, pol_path, diffuse_path, intrinsics_path, has_pol_data)
+            List of tuples (raw_path, pol_path, diffuse_path, intrinsics_path, has_pol_data, highlight_path)
         """
         """Find valid entries based on polarization format and optional diffuse folder"""
         scene_pairs = []
@@ -437,6 +445,11 @@ class UnReflectAnything_Dataset(Dataset):
             diffuse_dir = (
                 os.path.join(scene_path, self.diffuse_dir_name)
                 if self.diffuse_dir_name is not None
+                else None
+            )
+            highlight_dir = (
+                os.path.join(scene_path, self.highlight_dir_name)
+                if self.highlight_dir_name is not None
                 else None
             )
             intrinsics_path = os.path.join(scene_path, self.intrinsics_file_name)
@@ -466,17 +479,33 @@ class UnReflectAnything_Dataset(Dataset):
                 diffuse_files = [
                     f for f in os.listdir(diffuse_dir) if f.endswith(self.rgb_ext)
                 ]
+            highlight_files = []
+            if highlight_dir is not None and os.path.exists(highlight_dir):
+                highlight_files = sorted(
+                    [f for f in os.listdir(highlight_dir) if f.endswith(self.rgb_ext)]
+                )
 
             # Subsample per scene folder if requested (load 1/N frames)
             if self.sample_every_n > 1:
                 rgb_files = rgb_files[:: self.sample_every_n]
-            for rgb_file in rgb_files:
+
+            filestack_iterator = (
+                zip(rgb_files, highlight_files)
+                if self.load_paired_highlights
+                else rgb_files
+            )
+            for filestack in filestack_iterator:
+                rgb_file = filestack[0]
+                highlight_file = filestack[1] if self.load_paired_highlights else None
                 raw_path = os.path.join(rgb_dir, rgb_file)
                 # Determine diffuse path if available
                 diffuse_path = None
                 if diffuse_dir is not None and (rgb_file in diffuse_files):
                     diffuse_path = os.path.join(diffuse_dir, rgb_file)
-
+                # Paired highlight path (grayscale, same filename as rgb/diffuse); None if not loading highlights or no match
+                highlight_path = None
+                if highlight_dir is not None and (highlight_file in highlight_files):
+                    highlight_path = os.path.join(highlight_dir, highlight_file)
                 if not has_pol_data:
                     # No polarization data available - include raw-only sample (diffuse may or may not exist)
                     scene_pairs.append(
@@ -486,6 +515,7 @@ class UnReflectAnything_Dataset(Dataset):
                             diffuse_path,
                             intrinsics_path,
                             False,  # No polarization data
+                            highlight_path,
                         )
                     )
                 elif self.polarization_format == "single_file_clock":
@@ -499,6 +529,7 @@ class UnReflectAnything_Dataset(Dataset):
                                 diffuse_path,
                                 intrinsics_path,
                                 True,  # Has polarization data
+                                highlight_path,
                             )
                         )
 
@@ -523,6 +554,7 @@ class UnReflectAnything_Dataset(Dataset):
                                 diffuse_path,
                                 intrinsics_path,
                                 True,  # Has polarization data
+                                highlight_path,
                             )
                         )
 
@@ -548,6 +580,7 @@ class UnReflectAnything_Dataset(Dataset):
                                 diffuse_path,
                                 intrinsics_path,
                                 True,  # Has polarization data
+                                highlight_path,
                             )
                         )
 
@@ -562,6 +595,7 @@ class UnReflectAnything_Dataset(Dataset):
                                 diffuse_path,
                                 intrinsics_path,
                                 True,  # Has polarization data
+                                highlight_path,
                             )
                         )
 
@@ -579,7 +613,7 @@ class UnReflectAnything_Dataset(Dataset):
         """
         """Get list of scene names that are actually loaded in the dataset."""
         loaded_scenes = set()
-        for raw_path, _, _, _, _ in self.scene_pairs:
+        for raw_path, _, _, _, _, _ in self.scene_pairs:
             scene_name = os.path.basename(os.path.dirname(os.path.dirname(raw_path)))
             loaded_scenes.add(scene_name)
         return sorted(list(loaded_scenes))
@@ -734,6 +768,25 @@ class UnReflectAnything_Dataset(Dataset):
             "specular": I_spec,
             "diffuse": I_diff,
         }
+
+    def _load_highlight(self, highlight_path: str) -> torch.Tensor:
+        """
+        Load grayscale highlight image as a 1xHxW tensor in [0, 1].
+
+        Args:
+            highlight_path: Path to grayscale image (e.g. .png in highlight_dir).
+
+        Returns:
+            Tensor of shape [1, H, W], float32 in [0, 1].
+        """
+        # Load as grayscale; support both single-channel and RGB (take luminance)
+        img = cv2.imread(highlight_path, cv2.IMREAD_GRAYSCALE)
+        if img is None:
+            img = np.asarray(Image.open(highlight_path).convert("L"), dtype=np.float32)
+        else:
+            img = img.astype(np.float32)
+        out = torch.from_numpy(img).float().div_(255.0).clamp_(0.0, 1.0)
+        return out.unsqueeze(0)  # [1, H, W]
 
     def _load_raw_and_diffuse(
         self, raw_path: str, diffuse_path: str
@@ -916,16 +969,26 @@ class UnReflectAnything_Dataset(Dataset):
             Dictionary containing:
             - Polarization data: 'I0', 'I45', 'I90', 'I135', 'S0', 'S1', 'S2', 'DoLP', 'AoP', 'f_spec' (if available)
             - Image data: 'raw', 'specular', 'diffuse' (with backward-compatible alias 'rgb' == 'raw')
+            - Optional 'highlight': [1, H, W] grayscale tensor (if load_paired_highlights=True and highlight file exists)
             - Camera data: 'intrinsics' [3, 3]
             - File paths: 'filepaths' dict with keys 'raw_path', 'pol_path', 'diffuse_path', 'intrinsics_path' (if return_metadata=True)
             All image tensors have shape [C, H, W] where H, W match target_size if specified
         """
-        raw_path, pol_path, diffuse_path, intrinsics_path, has_pol_data = (
-            self.scene_pairs[idx]
-        )
+        (
+            raw_path,
+            pol_path,
+            diffuse_path,
+            intrinsics_path,
+            has_pol_data,
+            highlight_path,
+        ) = self.scene_pairs[idx]
 
         # Load data (potentially from cache)
         intrinsics = self._load_intrinsics(intrinsics_path)
+        if self.load_paired_highlights and highlight_path is not None:
+            sample_highlight = self._load_highlight(highlight_path)
+        else:
+            sample_highlight = None
 
         if has_pol_data and not self.load_rgb_only:
             # Load polarization data and use it for RAW separation if diffuse not provided
@@ -945,6 +1008,8 @@ class UnReflectAnything_Dataset(Dataset):
             else:
                 raw_data = self._load_raw_only(raw_path)
             sample = {**raw_data, "intrinsics": intrinsics}
+        if sample_highlight is not None:
+            sample["highlight"] = sample_highlight
         original_raw_size = sample["raw"].shape
         # Optional highlight detection and cropping on full resolution
         if self.highlight_enabled and "raw" in sample:
@@ -1028,6 +1093,10 @@ class UnReflectAnything_Dataset(Dataset):
                 sample["diffuse"] = self._resize_tensor(
                     sample["diffuse"], self.target_size
                 )
+            if "highlight" in sample:
+                sample["highlight"] = self._resize_tensor(
+                    sample["highlight"], self.target_size
+                )
             if "highlight_masks" in sample:
                 sample["highlight_masks"] = F.interpolate(
                     sample["highlight_masks"].unsqueeze(0),
@@ -1079,8 +1148,12 @@ class UnReflectAnything_Dataset(Dataset):
             metadata = {
                 "raw_path": raw_path,
                 "orig_size": torch.tensor(original_raw_size),
-                # "pol_path": pol_path,
-                # "intrinsics_path": intrinsics_path,
             }
+            if self.load_paired_highlights:
+                metadata["highlight_path"] = highlight_path
+            if not self.load_rgb_only:
+                metadata["pol_path"] = pol_path
+            if intrinsics_path is not None:
+                metadata["intrinsics_path"] = intrinsics_path
             sample["metadata"] = metadata
         return sample

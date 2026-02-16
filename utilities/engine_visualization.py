@@ -61,7 +61,7 @@ def create_visualization_images(
     if as_single_panel:
         visualization_dict = {}
         if diffuse_only:
-            all_keys = ["diffuse"]
+            all_keys = ["diffuse","highlight"]
         else:
             all_keys = list(
                 sorted(set(pred_decomposition.keys()) | set(gt_decomposition.keys()))
@@ -126,7 +126,7 @@ def create_visualization_images(
         )
 
         prediction_panel_loggable = panelize(
-            prediction_row, gt_row, mode="vertical" if not diffuse_only else "horizontal", resize_to_match=False
+            prediction_row, gt_row, mode="vertical" if len(all_keys) > 1 else "horizontal", resize_to_match=False
         )
         add_image_fn(
             visualization_dict,

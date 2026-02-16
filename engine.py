@@ -888,9 +888,10 @@ class Engine:
                 loss_value = losses["total"]
 
                 # Compositing the reconstructed image - for visualization purposes
-                pred_decomposition["rgb_highlighted"] = self.loss.reconstruct_image(
-                    pred_decomposition
-                )
+                if "diffuse" in pred_decomposition:
+                    pred_decomposition["rgb_highlighted"] = self.loss.reconstruct_image(
+                        pred_decomposition
+                    )
                 # Adding the loss mask to the gt_decomposition to log it on wandb
                 if phase == "Training":
                     gt_decomposition["supervision_mask"] = pixel_supervision_mask

@@ -18,6 +18,7 @@ _IDENTITY_KEY_MAP = {
     "RGB_DIR_NAME": "rgb_dir_name",
     "POL_DIR_NAME": "pol_dir_name",
     "DIFFUSE_DIR_NAME": "diffuse_dir_name",
+    "LOAD_PAIRED_HIGHLIGHTS": "load_paired_highlights",
 }
 _GENERIC = {
     "root_dir": "$DATASET_DIR/PLACEHOLDER/",
@@ -27,6 +28,7 @@ _GENERIC = {
     "rgb_dir_name": "rgb",
     "pol_dir_name": "pol",
     "diffuse_dir_name": "diffuse",
+    "load_paired_highlights": False,
 }
 
 
@@ -112,6 +114,15 @@ DATASET_DEFAULTS: Dict[str, Dict[str, Any]] = {
         "RGB_DIR_NAME": "rgb",
         "RGB_EXT": ".png",
     },
+    "SHIQ": {
+        "ROOT_DIR": "$DATASET_DIR/SHIQ/",
+        "RGB_DIR_NAME": "diffuse",
+        "HIGHLIGHT_DIR_NAME": "highlight",
+        "LOAD_PAIRED_HIGHLIGHTS": True,
+        "RGB_EXT": ".png",
+        
+    },
+    
 }
 
 # Wrapper classes (optional; only used when CLASS is set in config). They read from DATASET_DEFAULTS.
@@ -137,3 +148,4 @@ SUNRGBD_Dataset = _make_wrapper("SUNRGBD")
 SCANNET_Dataset = _make_wrapper("SCANNET")
 OPENIMAGESV7_Dataset = _make_wrapper("OPENIMAGESV7")
 ENDOSYNTH_Dataset = _make_wrapper("ENDOSYNTH")
+SHIQ_Dataset = _make_wrapper("SHIQ")

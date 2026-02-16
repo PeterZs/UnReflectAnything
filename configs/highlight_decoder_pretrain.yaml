@@ -5,27 +5,14 @@ parameters:
   ### MODEL ARCHITECTURE                                                       
   MODEL:
     value:
-      MODEL_CLASS: "UnReflect_Model_TokenInpainter"  # Main model class name (must match class in models.py)
+      MODEL_CLASS: "UnReflect_Model"  # Main model class name (must match class in models.py)  # <<<<<<<<< DECODER PRETRAINING: NOT USING TOKEN INPAINTER (DIRECT FROM DINO)
       MODEL_MODULE: "models"  # Module name to import model classes from (default: "models")
       RGB_ENCODER:
         ENCODER: "facebook/dinov3-vitl16-pretrain-lvd1689m"  # DINOv3 encoder model name (HuggingFace format)
         IMAGE_SIZE: 896  # Input image size (height and width in pixels)
-        RETURN_SELECTED_LAYERS: [3, 6, 9 , 12]  # Transformer layer indices to extract features from (0-indexed)
+        RETURN_SELECTED_LAYERS: [3, 6, 9, 12]  # Transformer layer indices to extract features from (0-indexed)
         RGB_ENCODER_LR: 0.0  # Learning rate for RGB encoder (0.0 = frozen, must be explicitly set)
       DECODERS:
-        diffuse:
-          FEATURE_DIM: 1024  # Feature dimension for decoder (should match encoder output)
-          REASSEMBLE_OUT_CHANNELS: [768,1024,1536,2048]  # Output channels for each decoder stage (DPT-style reassembly)
-          REASSEMBLE_FACTORS: [4.0, 2.0, 1.0, 0.5]  # Spatial upsampling factors for each stage
-          READOUT_TYPE: "ignore"  # Readout type for DPT decoder ("ignore", "project", etc.)
-          FROM_PRETRAINED: "diffuse_decoder.pt"  # Path to pretrained decoder weights (optional)
-          USE_BN: False  # Use batch normalization in decoder
-          DROPOUT: 0.1  # Dropout rate in decoder layers
-          OUTPUT_IMAGE_SIZE: [896,896]  # Output image resolution [height, width]
-          OUTPUT_CHANNELS: 3  # Number of output channels (3 for RGB diffuse image)
-          DECODER_LR: 1.0e-5 # Custom learning rate for decoder (0.0 = frozen, 1.0 = same as base LR)
-          NUM_FUSION_BLOCKS_TRAINABLE: 1  # Number of fusion blocks to train (0-4, null = train all if DECODER_LR != 0)
-          TRAIN_RGB_HEAD: True  # Whether to train RGB head (true/false, null = train if DECODER_LR != 0)
         highlight:
           FEATURE_DIM: 1024  # Feature dimension for highlight decoder
           REASSEMBLE_OUT_CHANNELS: [96,192,384,768]  # Output channels for each decoder stage
@@ -36,25 +23,25 @@ parameters:
           DROPOUT: 0.1  # Dropout rate in decoder layers
           OUTPUT_IMAGE_SIZE: [896,896]  # Output image resolution [height, width]
           OUTPUT_CHANNELS: 1  # Number of output channels (1 for highlight mask)
-          DECODER_LR: 1.0e-5  # Custom learning rate for decoder (0.0 = frozen, 1.0 = same as base LR)
+          DECODER_LR: 1.0e-6  # Custom learning rate for decoder (0.0 = frozen, 1.0 = same as base LR)
           NUM_FUSION_BLOCKS_TRAINABLE: null  # Number of fusion blocks to train (0-4, null = train all if DECODER_LR != 0)
-      TOKEN_INPAINTER:
+
+      TOKEN_INPAINTER: # <<<<<<<<<<<< DOESNT MATTER, MODEL CLASS IS NOT TOKEN INPAINTER
         TOKEN_INPAINTER_CLASS: "TokenInpainter_Prior"  # Token inpainter class name
         TOKEN_INPAINTER_MODULE: "token_inpainters"  # Module name to import token inpainter from
-        # FROM_PRETRAINED: "token_inpainter.pt"  # Path to pretrained token inpainter weights (optional)
-        TOKEN_INPAINTER_LR: 5.0e-4  # Learning rate for token inpainter (can differ from base LR)
+        FROM_PRETRAINED: "token_inpainter.pth"  # Path to pretrained token inpainter weights (optional)
+        TOKEN_INPAINTER_LR: 1.0e-5  # Learning rate for token inpainter (can differ from base LR)
         DEPTH: 6  # Number of transformer blocks
         HEADS: 16  # Number of attention heads
-        DROP: 0.05 # Dropout rate 
+        DROP: 0 # Dropout rate 
         USE_POSITIONAL_ENCODING: True  # Enable 2D sinusoidal positional encodings
         USE_FINAL_NORM: True  # Enable final LayerNorm before output projection
         USE_LOCAL_PRIOR: True  # Blend local mean prior for masked seeds
-        LOCAL_PRIOR_WEIGHT: 0.85  # Weight for local prior blending (1.0 = only mask_token, 0.0 = only local mean)
+        LOCAL_PRIOR_WEIGHT: 0.5  # Weight for local prior blending (1.0 = only mask_token, 0.0 = only local mean)
         LOCAL_PRIOR_KERNEL: 5  # Kernel size for local prior blending (> 1)
         SEED_NOISE_STD: 0.02  # Standard deviation of noise added to masked seeds during training  
-  
   INPAINT_MASK_DILATION:
-    value: 31  # Dilation kernel size (pixels) for inpaint mask - Must be odd
+    value: 3  # Dilation kernel size (pixels) for inpaint mask - Must be odd
   USE_TORCH_COMPILE:  # Enable PyTorch 2.0 torch.compile for faster training (experimental)
     value: False
   DISTRIBUTE:
@@ -63,75 +50,20 @@ parameters:
   ### DATA                                                                      
   DATASETS:
     value:
-      # Reserved key: key-value pairs here override the same keys for every dataset (per-dataset entries still override this).
-      SCRREAM:
-        VAL_SCENES: ["scene10", "scene04"]  # List of validation scene names
-        RESIZE_MODE: "resize+crop"  # Image resizing mode: "resize", "crop", "resize+crop", or "pad"
-        SAMPLE_EVERY_N: 6  # Load every Nth frame from each scene (1 = all frames, 4 = every 4th frame)
-        
-      HOUSECAT6D:
-        VAL_SCENES: ["val_scene1","val_scene2"]  # Validation scene names
-        RESIZE_MODE: "resize+crop"  # Image resizing mode
-        SAMPLE_EVERY_N: 4  # Load every Nth frame
-
-      CROMO:
-        TRAIN_SCENES: ["kitchen"]  # Training scene names (list or string)
-        # VAL_SCENES: "station"  # Validation scene names (optional)
-        RESIZE_MODE: "resize"  # Image resizing mode
-        SAMPLE_EVERY_N: 2  # Load every Nth frame
-    
-      PSD:
-        TRAIN_SCENES: "PSD_Train"  # Training scene name (string or list)
-        VAL_SCENES: "PSD_Val"  # Validation scene name (string or list)
-        RESIZE_MODE: "resize+crop"  # Image resizing mode
-        SAMPLE_EVERY_N: 1  # Load every Nth frame (1 = all frames)
-
-      SCARED:
-        VAL_SCENES: ["v22","v23","v24","v25","v26","v27","v28","v29","v30","v31","v32","v33","v34"]  # Validation scene names
-        RESIZE_MODE: "resize+crop"  # Image resizing mode
-        SAMPLE_EVERY_N: 8  # Load every Nth frame
-              
-      STEREOMIS_TRACKING:
-        VAL_SCENES: ["P2_2"]  # Validation scene names
-        RESIZE_MODE: "resize+crop"  # Image resizing mode
-        SAMPLE_EVERY_N: 2  # Load every Nth frame
-
-      CHOLEC80:
-        TRAIN_SCENES: ["train"]  # Validation scene names
-        VAL_SCENES: ["test"]  # Validation scene names
-        RESIZE_MODE: "resize+crop"  # Image resizing mode
-        SAMPLE_EVERY_N: 40  # Load every Nth frame
-
-      SUNRGBD:
-        VAL_SCENES: ["realsense"]  # Validation scene names
-        RESIZE_MODE: "resize+crop"  # Image resizing mode
-        SAMPLE_EVERY_N: 4  # Load every Nth frame
-
-      SCANNET:
-        TRAIN_SCENES: ["train"]
-        VAL_SCENES: ["val"]
+      SHIQ:
+        VAL_SCENES: ["test"]
         RESIZE_MODE: "resize+crop"
-        SAMPLE_EVERY_N: 5
-
-      OPENIMAGESV7:
-        TRAIN_SCENES: ["thescene"]
-        # VAL_SCENES: [""]
-        RESIZE_MODE: "resize+crop"
-        SAMPLE_EVERY_N: 5
-      
-      ENDOSYNTH:
-        TRAIN_SCENES: ["scene"]
-        # VAL_SCENES: ["val"]
-        RESIZE_MODE: "resize+crop"
+        TARGET_SIZE: [896,896]
         SAMPLE_EVERY_N: 1
-
-      ALL_DATASETS:
-        FEW_IMAGES: False   # Override FEW_IMAGES for all datasets (for quick debugging set True)
-        TARGET_SIZE: [896,896]  # Override target image size [height, width] for all datasets
+        LOAD_PAIRED_HIGHLIGHTS: True
         LOAD_RGB_ONLY: True
 
+      
+  FEW_IMAGES_ALL_DATASETS:
+    value: False  # If True, override all datasets' FEW_IMAGES to True (for quick debugging across all datasets)
+
   BATCH_SIZE: # Max batch size with img size 896 is 32
-    value: 6 # Number of samples per batch (adjust based on GPU memory)
+    value: 12 # Number of samples per batch (adjust based on GPU memory)
   NUM_WORKERS:
     value: 12  # Number of data loading worker processes (0 = main process only, "auto" = 90% of CPU affinity)
   SHUFFLE:
@@ -147,7 +79,7 @@ parameters:
   SURFACE_ROUGHNESS:
     value: 8.0  # Blinn-Phong surface roughness exponent (higher = sharper highlights)
   INTENSITY:
-    value: 2.0  # Specular highlight intensity multiplier
+    value: 0.0  # Specular highlight intensity multiplier
   LIGHT_DISTANCE_RANGE:
     value: [0.0, 1]  # Range for light source distance sampling [min, max] (normalized)
   LIGHT_LEFT_RIGHT_ANGLE:
@@ -155,9 +87,9 @@ parameters:
   LIGHT_ABOVE_BELOW_ANGLE:
     value: [0, 360]  # Range for light source vertical angle [min, max] in degrees
   DATASET_HIGHLIGHT_DILATION:
-    value: 25  # Dilation kernel size (pixels) for dataset highlight masks
+    value: 25  #sDilation kernel size (pixels) for dataset highlight masks
   DATASET_HIGHLIGHT_THRESHOLD:
-    value: 0.85  # Brightness/luminance threshold (0-1) for detecting highlights in dataset images
+    value: 0.9  # Brightness/luminance threshold (0-1) for detecting highlights in dataset images
   DATASET_HIGHLIGHT_USE_LUMINANCE:
     value: True  # If True, use perceptually-weighted luminance (0.299*R + 0.587*G + 0.114*B) for dataset highlights; if False, use simple mean brightness
   HIGHLIGHT_COLOR:
@@ -166,12 +98,12 @@ parameters:
     value: True  # Clamp reconstructed images to [0, 1] range if True
 
   ### OPTIMIZATION                                                                      
-  LEARNING_RATE:
-    value: 1.0e-3  # Base learning rate for optimizer   # DEPRECATED. SETTING LR FOR EACH MODULE ABOVE
-  WEIGHT_DECAY:   
-    value: 0.0 # L2 regularization weight (0.0 = no weight decay)
   EPOCHS:
-    value: 10  # Maximum number of training epochs
+    value: 20  # Maximum number of training epochs<
+  LEARNING_RATE:
+    value: 1.0e-4  # Base learning rate for optimizer
+  WEIGHT_DECAY:   
+    value: 0.0  # L2 regularization weight (0.0 = no weight decay)
   GRADIENT_ACCUMULATION_STEPS:
     value: 1  # Number of steps to accumulate gradients before optimizer step (1 = no accumulation)
   WARMUP:
@@ -184,17 +116,21 @@ parameters:
         PATIENCE: 5  # Number of epochs to wait before reducing LR
         FACTOR: 0.1  # Factor by which LR is reduced (new_lr = old_lr * factor)
       COSINE:  # CosineAnnealingLR scheduler (cosine annealing schedule)
-        N_PERIODS: 0.5  # Number of cosine periods over training
+        N_PERIODS: 1  # Number of cosine periods over training
       # STEPWISE:  # StepLR scheduler (reduces LR at fixed step intervals)
-      #   N_STEPS: 4  # Number of times to reduce LR during training
-      #   GAMMA: 0.5  # Factor by which LR is reduced at each step (new_lr = old_lr * gamma)
+      #   N_STEPS: 5  # Number of times to reduce LR during training
+      #   GAMMA: 0.25  # Factor by which LR is reduced at each step (new_lr = old_lr * gamma)
       # EXPONENTIAL:  # ExponentialLR scheduler (exponential decay)
       #   GAMMA: 0.5  # Multiplicative factor for exponential decay
 
+  SWITCH_OPTIMIZER_EPOCH:
+    value: null  # Epoch number to switch from bootstrap to refining optimizer (null = no switch)
   OPTIMIZER_BOOTSTRAP_NAME:
     value: "AdamW"  # Optimizer name for initial training phase ("Adam", "SGD", etc.)
+  OPTIMIZER_REFINING_NAME:
+    value: "AdamW"  # Optimizer name for refining phase (used after SWITCH_OPTIMIZER_EPOCH)
   EARLY_STOPPING_PATIENCE:
-    value: 10  # Number of epochs without improvement before stopping training
+    value: 20  # Number of epochs without improvement before stopping training
   SAVE_INTERVAL:
     value: 1000  # Number of training steps between model checkpoints
   
@@ -205,14 +141,22 @@ parameters:
   SPECULAR_LOSS_WEIGHT:
     value: 0.0  # Weight for specular component reconstruction loss
   DIFFUSE_LOSS_WEIGHT:
-    value: 1.0  # Weight for diffuse component reconstruction loss
+    value: 0.0  # Weight for diffuse component reconstruction loss
   HIGHLIGHT_LOSS_WEIGHT:
     value: 1.0  # Weight for highlight mask regression loss
   TOKEN_INPAINT_LOSS_WEIGHT:
-    value: 1.0  # Weight for token-space inpainting loss (L1 + cosine similarity in feature space)
+    value: 0.0  # Weight for token-space inpainting loss (L1 + cosine similarity in feature space)
+
   IMAGE_RECONSTRUCTION_LOSS_WEIGHT:
     value: 0.0  # Weight for full image reconstruction loss
-
+  SATURATION_RING_LOSS_WEIGHT:
+    value: 0.0  # Weight for saturation ring consistency loss (around highlight regions)
+  RING_KERNEL_SIZE:
+    value: 11  # Kernel size (odd number) for saturation ring dilation around highlights
+  RING_VAR_WEIGHT:
+    value: 0.5  # Weight for variance matching in saturation ring loss (vs mean matching)
+  RING_TEXTURE_WEIGHT:
+    value: 0.0  # Weight for texture consistency term in saturation ring loss
   HLREG_W_L1:
     value: 1.0  # Weight for L1 loss in highlight regression
   HLREG_USE_CHARB:
@@ -232,10 +176,14 @@ parameters:
   HLREG_FOCAL_GAMMA:
     value: 2.0      # Focal loss gamma parameter (0.0 = standard BCE, 1.0-2.0 helps with gradient vanishing)
   
-  WEIGHT_SEAM:
-    value: 0.5  # Weight for gradient matching loss on saturation ring
+  WEIGHT_CONTEXT_IDENTITY: 
+    value: 0.0  # LEAVE TO 0.0: Weight for L1 loss on context (non-masked) regions (identity preservation) 
+  WEIGHT_TV_IN_HOLE:
+    value: 0.0  # LEAVE TO 0.0: Weight for total variation loss inside masked/hole regions
   RING_DILATE_KERNEL:
     value: 17  # Dilation kernel size (odd number) for creating ring mask around highlights
+  WEIGHT_SEAM:
+    value: 0.0  # Weight for gradient matching loss on saturation ring
   SEAM_USE_CHARB:
     value: True  # Use Charbonnier loss instead of L1 in seam loss (smooth L1 for boundary consistency)
   SEAM_WEIGHT_GRAD:
@@ -245,7 +193,7 @@ parameters:
 
   ### DIFFUSE HIGHLIGHT PENALTY
   WEIGHT_DIFFUSE_HIGHLIGHT_PENALTY:
-    value: 0.75 # Weight for penalty loss on highlights in diffuse decoder output (0.0 = disabled)
+    value: 0.0  # Weight for penalty loss on highlights in diffuse decoder output (0.0 = disabled)
   DIFFUSE_HL_THRESHOLD:
     value: 0.8  # Brightness/luminance threshold for detecting highlights in diffuse (0.0-1.0)
   DIFFUSE_HL_USE_CHARB:
@@ -255,7 +203,7 @@ parameters:
   DIFFUSE_HL_TARGET_BRIGHTNESS:
     value: null  # Target brightness/luminance for penalized pixels (null = use threshold value)
   DIFFUSE_HL_USE_LUMINANCE:
-    value: False  # If True, use perceptually-weighted luminance (0.299*R + 0.587*G + 0.114*B); if False, use simple mean brightness
+    value: True  # If True, use perceptually-weighted luminance (0.299*R + 0.587*G + 0.114*B); if False, use simple mean brightness
 
   ### LOGGING, RESULTS AND WANDB                                                                 
   LOG_INTERVAL:
@@ -273,4 +221,5 @@ parameters:
   WANDB_PROJECT:
     value: "UnReflectAnything"  # WandB project name
   NOTES:
-    value: "LOCAL_PRIOR_WEIGHT 0.9"  # Notes/description for this training run
+    value: ""  # Notes/description for this training run
+  

@@ -461,6 +461,7 @@ def create_datasets_from_config(
                 "few_images": dataset_config.get("FEW_IMAGES", False),
                 "sample_every_n": dataset_config.get("SAMPLE_EVERY_N", 1),
                 "load_rgb_only": dataset_config.get("LOAD_RGB_ONLY", False),
+                "load_paired_highlights": dataset_config.get("LOAD_PAIRED_HIGHLIGHTS", False),
                 "highlight_enable": dataset_config.get("HIGHLIGHT_ENABLE", False),
                 "highlight_brightness_threshold": dataset_config.get(
                     "HIGHLIGHT_BRIGHTNESS_THRESHOLD", 0.93
