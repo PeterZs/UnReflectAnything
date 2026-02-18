@@ -126,6 +126,7 @@ py-modules = [
   "requirements.txt",
 ]
 "unreflectanything" = [
+  "pretrained_config.yaml",
   "data/*.bash",
   "data/*.zsh",
   "data/*.txt",
