@@ -111,23 +111,23 @@ parameters:
         RESIZE_MODE: "resize+crop"  # Image resizing mode
         SAMPLE_EVERY_N: 4  # Load every Nth frame
 
-      SCANNET:
-        TRAIN_SCENES: ["train"]
-        VAL_SCENES: ["val"]
-        RESIZE_MODE: "resize+crop"
-        SAMPLE_EVERY_N: 5
+      # SCANNET:
+      #   TRAIN_SCENES: ["train"]
+      #   VAL_SCENES: ["val"]
+      #   RESIZE_MODE: "resize+crop"
+      #   SAMPLE_EVERY_N: 5
 
-      OPENIMAGESV7:
-        TRAIN_SCENES: ["thescene"]
-        # VAL_SCENES: [""]
-        RESIZE_MODE: "resize+crop"
-        SAMPLE_EVERY_N: 5
+      # OPENIMAGESV7:
+      #   TRAIN_SCENES: ["thescene"]
+      #   # VAL_SCENES: [""]
+      #   RESIZE_MODE: "resize+crop"
+      #   SAMPLE_EVERY_N: 5
       
-      ENDOSYNTH:
-        TRAIN_SCENES: ["scene"]
-        # VAL_SCENES: ["val"]
-        RESIZE_MODE: "resize+crop"
-        SAMPLE_EVERY_N: 1
+      # ENDOSYNTH:
+      #   TRAIN_SCENES: ["scene"]
+      #   # VAL_SCENES: ["val"]
+      #   RESIZE_MODE: "resize+crop"
+      #   SAMPLE_EVERY_N: 1
 
       ALL_DATASETS:
         FEW_IMAGES: False   # Override FEW_IMAGES for all datasets (for quick debugging set True)
@@ -149,9 +149,9 @@ parameters:
   MOGE_MODEL:
     value: "Ruicheng/moge-2-vits-normal"  # MoGe model name for normal estimation (HuggingFace format)
   SURFACE_ROUGHNESS:
-    value: 100.0  # Blinn-Phong surface roughness exponent (higher = sharper highlights)
+    value: [100.0, 2000.0]  # Blinn-Phong surface roughness exponent (higher = sharper highlights)
   INTENSITY:
-    value: 0.8  # Specular highlight intensity multiplier
+    value: [0.5, 1.0]  # Specular highlight intensity multiplier
   LIGHT_DISTANCE_RANGE:
     value: [0.0, 1]  # Range for light source distance sampling [min, max] (normalized)
   LIGHT_LEFT_RIGHT_ANGLE:

@@ -16,6 +16,8 @@ UnReflectAnything works on both natural indoor and surgical/endoscopic domain da
 ---
 ![examples](https://raw.githubusercontent.com/alberto-rota/UnReflectAnything/refs/heads/main/assets/header.png)
 
+
+
 ## Installation
 ```bash
 pip install unreflectanything
@@ -100,6 +102,18 @@ options = ura.InferenceOptions(
 )
 ura.run_inference(options)
 ```
+
+## Contributing & Development
+If you want to contribute or develop UnReflectAnything:
+1. Clone the repository:
+   ```bash
+   git clone https://github.com/alberto-rota/UnReflectAnything.git
+   cd UnReflectAnything
+   ```
+2. Install dependencies (we recommend a virtual environment with Python 3.12):
+   ```bash
+   pip install -r requirements.txt
+   ```
 
 ## Citation
 If you include UnReflectAnything in your pipline or research work, we encourage you cite our work. 

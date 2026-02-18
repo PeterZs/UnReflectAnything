@@ -705,9 +705,17 @@ class HighlightRender(nn.Module):
             # else: assume broadcastable to [B,1,H,W]
         spec_lobe = nh**surface_roughness  # [B,1,H,W]
 
+        # Allow intensity to be scalar or per-sample tensor [B] -> [B,1,1,1]
+        intensity_bc = intensity
+        if torch.is_tensor(intensity):
+            if intensity.ndim == 1:
+                intensity_bc = intensity.view(intensity.shape[0], 1, 1, 1)
+            elif intensity.ndim == 2:
+                intensity_bc = intensity.view(intensity.shape[0], 1, 1, 1)
+
         # Apply Schlick Fresnel approximation
         F = self.schlick_fresnel(nv, F0=F0)  # [B,1,H,W]
-        H = intensity * F * spec_lobe  # [B,1,H,W]
+        H = intensity_bc * F * spec_lobe  # [B,1,H,W]
         return H
 
     @time_module("polarization_parameters")
@@ -786,12 +794,17 @@ class HighlightRender(nn.Module):
         Args:
             rgb: [B,3,H,W] input RGB image, all values in [0,1]
             H: [B,1,H,W] single-channel highlight map; both highlight intensity and blending alpha, in [0,1]
-            intensity: scales highlight strength (usually 1.0).
+            intensity: scalar or [B]/[B,1,1,1] tensor; scales highlight strength per sample.
 
         Returns:
             [B,3,H,W]: RGB result with highlights composed, values clamped to [0,1].
         """
-        # Expand H to RGB channels
+        # Per-sample intensity: ensure broadcastable [B,1,1,1]
+        if torch.is_tensor(intensity):
+            if intensity.ndim == 1:
+                intensity = intensity.view(intensity.shape[0], 1, 1, 1)
+            elif intensity.ndim == 2:
+                intensity = intensity.view(intensity.shape[0], 1, 1, 1)
         # Use H as an alpha map to blend pure white highlight over input rgb, modulated by intensity
         alpha = (H * intensity).clamp(0, 1)  # [B,1,H,W]
         alpha_rgb = alpha.expand_as(rgb)  # [B,3,H,W]
@@ -965,8 +978,8 @@ class HighlightRender(nn.Module):
 
         B, C, H, W = rgb.shape
 
-        # If intensity is zero, skip all highlight and geometry computations
-        if intensity == 0:
+        # If intensity is scalar zero, skip all highlight and geometry computations (tensor => never skip)
+        if not torch.is_tensor(intensity) and intensity == 0:
 
             def zeros_1hw(ch):
                 return torch.zeros((B, ch, H, W), device=device, dtype=rgb.dtype)

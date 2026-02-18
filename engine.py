@@ -3,7 +3,7 @@ import os
 import shutil
 import glob
 from contextlib import contextmanager, nullcontext
-from typing import Optional, Union
+from typing import Optional, Union, Sequence
 
 import numpy as np
 import pandas as pd
@@ -26,6 +26,31 @@ from utilities import engine_visualization as engine_viz
 from utilities.system_ops import get_slurm_time_left_minutes
 
 ablation = Ablation(False)
+
+
+def _resolve_highlight_param(
+    value: Union[float, Sequence[float]],
+    batch_size: int,
+    device: torch.device,
+    log_uniform: bool = False,
+) -> Union[float, torch.Tensor]:
+    """
+    Resolve a highlight config value to a scalar or per-sample tensor [B].
+    If value is a sequence of two numbers [min, max], sample batch_size values:
+    - log_uniform=True: log-uniform in [min, max] (for surface roughness).
+    - log_uniform=False: uniform in [min, max] (for intensity).
+    Otherwise return the scalar as-is (backward compatible).
+    """
+    if isinstance(value, (list, tuple)) and len(value) == 2:
+        lo, hi = float(value[0]), float(value[1])
+        if log_uniform:
+            u = torch.rand(batch_size, device=device, dtype=torch.float32)
+            log_lo = math.log(lo)
+            log_hi = math.log(hi)
+            return torch.exp(log_lo + u * (log_hi - log_lo))  # [B]
+        u = torch.rand(batch_size, device=device, dtype=torch.float32)
+        return u * (hi - lo) + lo  # [B]
+    return value
 
 
 class Engine:
@@ -772,11 +797,23 @@ class Engine:
                     batch_size=self.batch_size,
                     device=self.device,
                 )
+                surface_roughness = _resolve_highlight_param(
+                    self.config.SURFACE_ROUGHNESS,
+                    self.batch_size,
+                    self.device,
+                    log_uniform=True,
+                )
+                intensity = _resolve_highlight_param(
+                    self.config.INTENSITY,
+                    self.batch_size,
+                    self.device,
+                    log_uniform=False,
+                )
                 highlight_result = self.add_highlights(
                     rgb=sample["diffuse"].to(self.device, non_blocking=True),
                     light_pos=random_light_pos,
-                    surface_roughness=self.config.SURFACE_ROUGHNESS,
-                    intensity=self.config.INTENSITY,
+                    surface_roughness=surface_roughness,
+                    intensity=intensity,
                     return_dataset_highlights=True,
                     dataset_highlight_dilation=self.config.DATASET_HIGHLIGHT_DILATION,
                     dataset_highlight_threshold=self.config.DATASET_HIGHLIGHT_THRESHOLD,

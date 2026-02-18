@@ -216,9 +216,6 @@ class EarlyStopping:
 
                 self.bucket_name = get_gcs_bucket_name()
             except (ImportError, ValueError) as e:
-                logger.warning(
-                    f"Warning: Could not get bucket name from environment: {str(e)}"
-                )
                 self.bucket_name = None
         else:
             self.bucket_name = bucket_name
