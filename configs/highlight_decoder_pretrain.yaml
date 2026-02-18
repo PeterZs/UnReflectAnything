@@ -41,7 +41,7 @@ parameters:
         LOCAL_PRIOR_KERNEL: 5  # Kernel size for local prior blending (> 1)
         SEED_NOISE_STD: 0.02  # Standard deviation of noise added to masked seeds during training  
   INPAINT_MASK_DILATION:
-    value: None  # Dilation kernel size (pixels) for inpaint mask (None = compute based on image size)
+    value: 40  # Dilation kernel size (pixels) for inpaint mask (None = compute based on image size)
   INPAINT_MASK_THRESHOLD:
     value: 0.2  # Inpaint selection threshold
   USE_TORCH_COMPILE:  # Enable PyTorch 2.0 torch.compile for faster training (experimental)
