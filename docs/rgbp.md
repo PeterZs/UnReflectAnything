@@ -57,7 +57,7 @@ sample = dataset[0]
 from dataset import load_config_and_create_datasets
 
 # Load datasets from configuration file
-datasets = load_config_and_create_datasets("config_train.yaml")
+datasets = load_config_and_create_datasets("config/train.yaml")
 train_loader = DataLoader(datasets['training'], batch_size=16)
 ```
 

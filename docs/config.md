@@ -4,16 +4,16 @@ Configuration files contain all parameters used to load datasets, initialize the
 
 There are three default configuration files in the project directory:
 
-- `config_train.yaml` is used for training the pipeline
-- `config_test.yaml` is used to run tests on a pipeline that has already been trained with saved results
-- `config_sweep.yaml` is used to run a WandB sweep
+- `config/train.yaml` is used for training the pipeline
+- `config/test.yaml` is used to run tests on a pipeline that has already been trained with saved results
+- `config/sweep.yaml` is used to run a WandB sweep
 
 !!! info
-    The syntax and structure of the files are designed so that each file can be easily adapted for other purposes with minimal changes. For example, it's straightforward to take the training configuration from `config_train.yaml` and use it for a WandB sweep by adding extra hyperparameters to the file.
+    The syntax and structure of the files are designed so that each file can be easily adapted for other purposes with minimal changes. For example, it's straightforward to take the training configuration from `config/train.yaml` and use it for a WandB sweep by adding extra hyperparameters to the file.
 
 Each file contains a "parameters" section, which includes the actual hyperparameters that can be configured.
 
-The `config_sweep.yaml` file additionally contains the following sections:
+The `config/sweep.yaml` file additionally contains the following sections:
 
 ```yaml
 method: grid
@@ -35,12 +35,12 @@ For hyperparameter configuration:
 !!! example "Adapting the training config to a sweep config"
     If a training experiment was satisfactory and you want to run a sweep around the successful configuration:
     
-    1. Copy the "parameters" section from `config_train.yaml` to `config_sweep.yaml`
+    1. Copy the "parameters" section from `config/train.yaml` to `config_sweep.yaml`
     2. Change hyperparameters to be swept: replace the "value" key with "values" and specify the list or distribution
 
 ## Configuration Parameters
 
-This section explains each parameter in the `config_train.yaml` file:
+This section explains each parameter in the `config/train.yaml` file:
 
 ### Model Architecture
 

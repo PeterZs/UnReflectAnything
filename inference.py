@@ -41,7 +41,7 @@ class InferenceOptions:
             provided together with ``run``, the script loads the saved config
             artifacts for model reconstruction.
         model_config_path: Optional configuration YAML that follows the training
-            template (``config_train.yaml``). When specified, the configuration
+            template (``config/train.yaml``). When specified, the configuration
             is parsed and used to build the architecture prior to loading the
             checkpoint weights.
         batch_size: Number of images processed per forward pass. The default is

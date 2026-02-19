@@ -26,7 +26,7 @@ def _build_sweep_from_train(train_cfg: dict, sweep_name: str | None = None) -> d
         "metric": {"goal": "minimize", "name": "Validation/epoch/Loss"},
         "program": "ablate_agent.py",
         "run_cap": 2,  # ensure sweep ends after two runs
-        # keep legacy top-level project to match config_sweep.yaml style
+        # keep legacy top-level project to match config/sweep.yaml style
         "project": project,
         "parameters": {},
     }
@@ -55,7 +55,7 @@ def main():
         "--config",
         "-c",
         type=str,
-        default=os.environ.get("ABLATE_CONFIG", "config_train.yaml"),
+        default=os.environ.get("ABLATE_CONFIG", "config/train.yaml"),
         help="Path to base train config",
     )
     args, unknown = parser.parse_known_args()

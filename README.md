@@ -6,6 +6,7 @@
 [![Demo](https://img.shields.io/badge/Demo-HF%20-FFD21E?logo=huggingface&logoColor=FFD21E)](https://huggingface.co/spaces/AlbeRota/UnReflectAnything)
 [![Modelcard](https://img.shields.io/badge/Model%20Card-HF%20-FFD21E?logo=huggingface&logoColor=FFD21E)](https://huggingface.co/AlbeRota/UnReflectAnything)
 [![Wiki](https://img.shields.io/badge/API-Wiki-9187FF?logo=wikipedia&logoColor=9187FF)](https://github.com/alberto-rota/UnReflectAnything/wiki)
+[![Colab](https://img.shields.io/badge/Examples-Colab-F9AB00?logo=googlecolab&logoColor=F9AB00)](https://colab.research.google.com/#fileId=https%3A//huggingface.co/AlbeRota/UnReflectAnything/blob/main/notebooks/UnReflectAnything.ipynb)
 [![Licence](https://img.shields.io/badge/MIT-License-1E811F)](https://mit-license.org/)
 ### RGB-Only Highlight Removal by Rendering Synthetic Specular Supervision
 UnReflectAnything inputs any RGB image and removes specular highlights, returning a clean diffuse-only outputs. We trained UnReflectAnything by synthetizing specularities and supervising in DINOv3 feature space.
@@ -62,45 +63,40 @@ Refer to the [Wiki](https://github.com/alberto-rota/UnReflectAnything/wiki) to g
 
 | Subcommand | Description | Command |
 |------------|-------------|-------------|
-| `inference` | Run inference on an image directory  |`ura inference --input /path/to/images --output /path/to/unref_images` |
-| `train` | Run training | `ura train --config config_train.yaml`|
-| `test` | Run evaluation on a trained model |`ura test --config config_test.yaml`|
-| `download` | Download checkpoint weights, sample images, notebooks |`ura download --weights`|
-| `verify` | Verify weights installation and compatibility, as well as dataset directory structure | `ura verify --dataset /path/to/dataset`|
-| `evaluate` | Compute metrics on output data | `ura evaluate --output /path/to/unref_images --gt /path/to/groundtruth_images/`|
-| `completion` | Print shell completion (bash/zsh): |`ura completion bash` |
-| `cite` | Print shell completion (bash/zsh)| `ura cite --bibtex` |
+| `inference` | Run inference on image(s) to remove reflections | `ura inference /path/to/images -o /path/to/output` |
+| `download` | Download checkpoint weights, sample images, notebooks, configs | `ura download --weights` |
+| `cache` | Print cache directory or clear cached assets | `ura cache --dir` or `ura cache --clear` |
+| `verify` | Verify weights installation and compatibility, or dataset directory structure | `ura verify --weights` or `ura verify --dataset --path /path/to/dataset` |
+| `cite` | Print citation (BibTeX, APA, MLA, IEEE, plain) | `ura cite --bibtex` |
+| `completion` | Print or install shell completion (bash/zsh) | `ura completion bash` |
+
+Training, testing, and evaluation are available via the [Python API](https://github.com/alberto-rota/UnReflectAnything/wiki); see the [Wiki](https://github.com/alberto-rota/UnReflectAnything/wiki) for details.
 
 ## Python API
 
 The same endpoints above are exposed as a Python API. Refer to the [Wiki](https://github.com/alberto-rota/UnReflectAnything/wiki) to get detailed documentation about each endpoint. A few examples are reported below
 
 ```python
-import unreflectanything as ura
+import unreflectanything as unreflect
 import torch
 
 # Get the model class (e.g. for custom setup or training)
-ModelClass = ura.model()
+ModelClass = unreflect.model()
 
 # Get a pretrained model (torch.nn.Module) and run on batched RGB
-uramodel = ura.model(pretrained=True)  # uses cached weights; run 'ura download --weights' first
+unreflectmodel = unreflect.model(pretrained=True)  # uses cached weights; run 'unreflect download --weights' first
 images = torch.rand(2, 3, 448, 448, device="cuda")  # [B, 3, H, W], values in [0, 1]
-model_out = uramodel(images)  # [B, 3, H, W] diffuse tensor
+model_out = unreflectmodel(images)  # [B, 3, H, W] diffuse tensor
 
 # File-based or tensor-based inference (one-shot, no model handle)
-ura.inference("input.png", output="output.png")
-result = ura.inference(images)  # tensor input returns tensor
+unreflect.inference("input.png", output="output.png")
+result = unreflect.inference(images)  # tensor input returns tensor
 
-# Run training or testing
-ura.run_pipeline(mode="train")   # or mode="test"
+unreflect.inference(images, output="output.png")
+result = unreflect.inference(images)  # tensor input returns tensor
 
-# Run inference from options
-options = ura.InferenceOptions(
-    weights_path="path/to/full_model_weights.pt",
-    input_dir="path/to/input/images",
-    output_dir="path/to/output/diffuse",
-)
-ura.run_inference(options)
+# Cache directory (where weights, images, etc. are stored)
+weights_dir = unreflect.cache("weights")
 ```
 
 ## Contributing & Development
@@ -123,7 +119,7 @@ unreflectanything cite --bibtex
 ```
 or copy it directly from below
 ```
-@misc{rota2025unreflectanythingrgbonlyhighlightremoval,
+@misc{rota2025unreflectanything,
       title={UnReflectAnything: RGB-Only Highlight Removal by Rendering Synthetic Specular Supervision}, 
       author={Alberto Rota and Mert Kiray and Mert Asim Karaoglu and Patrick Ruhkamp and Elena De Momi and Nassir Navab and Benjamin Busam},
       year={2025},

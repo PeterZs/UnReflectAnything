@@ -10,7 +10,7 @@ from os import PathLike
 
 
 def train(
-    config: Union[str, PathLike, Path] = "config_train.yaml",
+    config: Union[str, PathLike, Path] = "config/train.yaml",
     resume_run: Optional[str] = None,
     boot: bool = False,
     **overrides,

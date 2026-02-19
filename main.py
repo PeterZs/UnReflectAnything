@@ -91,11 +91,17 @@ def run_pipeline(mode: str = "train", config: Optional[Dict[str, Any]] = None) -
         help="Run in boot mode with minimal parameters",
     )
     parser.add_argument(
+        "config_file",
+        nargs="?",
+        default=None,
+        help="Path to the config file (optional positional)",
+    )
+    parser.add_argument(
         "--config",
         "-c",
         type=str,
-        default=f"config_{mode}.yaml",
-        help="Path to the config file",
+        default=os.path.join("config", f"{mode}.yaml"),
+        help="Path to the config file (overridden by positional if both given)",
     )
     parser.add_argument(
         "--resume-run",
@@ -150,8 +156,20 @@ def run_pipeline(mode: str = "train", config: Optional[Dict[str, Any]] = None) -
             logger.info("Waiting for debugger to attach...")
             debugpy.wait_for_client()
 
-    # Load and process configuration
-    CONFIG_PATH = args.config
+    # Load and process configuration (search cwd, then config/, then configs/)
+    def _resolve_config_path(path: str) -> str:
+        if os.path.isabs(path) and os.path.isfile(path):
+            return path
+        cwd = os.getcwd()
+        basename = os.path.basename(path)
+        for dir_name in ("", "config", "configs"):
+            candidate = os.path.join(cwd, dir_name, basename) if dir_name else os.path.join(cwd, basename)
+            if os.path.isfile(candidate):
+                return candidate
+        return path  # let load_and_process_config raise FileNotFoundError
+
+    config_path_arg = args.config_file if args.config_file is not None else args.config
+    CONFIG_PATH = _resolve_config_path(config_path_arg)
     config = load_and_process_config(
         config_path=CONFIG_PATH,
         config=config,

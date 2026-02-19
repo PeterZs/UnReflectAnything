@@ -1,5 +1,5 @@
 """
-Dataset identity defaults live here so config_train.yaml stays minimal.
+Dataset identity defaults live here so config/train.yaml stays minimal.
 
 **Change defaults only in DATASET_DEFAULTS** (the dict below). Do not edit the
 wrapper classes for default values—they forward DATASET_DEFAULTS automatically.

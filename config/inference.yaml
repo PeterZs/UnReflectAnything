@@ -3,7 +3,7 @@ run: "gallant-bush-806"
 runs_dir: "/anvme/workspace/v120bb18-unreflectanything/runs"
 weights_path: "/anvme/workspace/v120bb18-unreflectanything/results/gallant-bush-806/models/full_model_weights.pt"
 
-model_config_path: "/anvme/workspace/v120bb18-unreflectanything/config_train.yaml"
+model_config_path: "/anvme/workspace/v120bb18-unreflectanything/config/train.yaml"
 model_module: "models"
 input_dir: "/anvme/workspace/v120bb18-unreflectanything/benchmark/data/input"
 output_dir: "/anvme/workspace/v120bb18-unreflectanything/benchmark/data/OURS_L1"

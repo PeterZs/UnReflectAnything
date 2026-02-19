@@ -10,7 +10,7 @@ from os import PathLike
 
 
 def test(
-    config: Union[str, PathLike, Path] = "config_test.yaml",
+    config: Union[str, PathLike, Path] = "config/test.yaml",
     **overrides,
 ) -> None:
     """Run the test/evaluation pipeline.

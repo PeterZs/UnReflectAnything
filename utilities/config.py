@@ -559,7 +559,7 @@ def create_datasets_from_config(
         logger.warning("1. Missing or incorrect DATASETS section in config file")
         logger.warning("2. Invalid dataset root directories")
         logger.warning("3. Missing dataset classes")
-        logger.warning("Please check your config_train.yaml file structure")
+        logger.warning("Please check your config/train.yaml file structure")
         raise
 
 

@@ -623,8 +623,8 @@ Examples:
 #         "-c",
 #         "--config",
 #         type=str,
-#         default="config_train.yaml",
-#         help="Path to training config YAML (default: config_train.yaml)",
+#         default="config/train.yaml",
+#         help="Path to training config YAML (default: config/train.yaml)",
 #         metavar="PATH",
 #     )
 #     p_train.add_argument(
@@ -656,7 +656,7 @@ Examples:
 #         "-c",
 #         "--config",
 #         type=str,
-#         default="config_test.yaml",
+#         default="config/test.yaml",
 #         help="Path to test config YAML (default: config_test.yaml)",
 #         metavar="PATH",
 #     )

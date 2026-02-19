@@ -5,7 +5,7 @@ The training pipeline is executed by executing
 python train.py
 ```
 
-which wraps `main.py` and reads the `config_train.yaml` file containing all configuration parameters.
+which wraps `main.py` and reads the `config/train.yaml` file containing all configuration parameters.
 
 ## Command Line Arguments
 
@@ -16,7 +16,7 @@ which wraps `main.py` and reads the `config_train.yaml` file containing all conf
 - `--nodebug`: Disables the default debugger instantiation
 
 !!! tip Important
-    All parameters in `config_train.yaml` can be overridden via command line arguments.
+    All parameters in `config/train.yaml` can be overridden via command line arguments.
     - **Config file**: Parameters use `UPPERCASE_AND_UNDERSCORED` format (e.g., `LEARNING_RATE`, `BATCH_SIZE`)
     - **CLI override**: Use `lowercase_and_underscored` format (e.g., `learning_rate`, `batch_size`)
 
@@ -24,7 +24,7 @@ which wraps `main.py` and reads the `config_train.yaml` file containing all conf
     ```bash
     python train.py --epochs=300
     ```
-    This command will override the `EPOCHS` parameter in `config_train.yaml` with the value `300`.
+    This command will override the `EPOCHS` parameter in `config/train.yaml` with the value `300`.
 
 
 ## Modifying the Pipeline

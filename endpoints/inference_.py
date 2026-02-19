@@ -409,7 +409,7 @@ def parse_cli():
         "--config",
         "-c",
         type=str,
-        default="./config_inference.yaml",
+        default="./config/inference.yaml",
         required=False,
         help="Absolute path to the inference YAML options file (default: ./config_inference.yaml)",
     )
