@@ -1605,8 +1605,8 @@ class Engine:
 
         # Log resumed-from epoch to WandB so the run summary shows correct continuity
         if self._is_main_process() and self.wandb is not None:
-            self.wandb.run.summary["resumed_from_epoch_index"] = last_completed_epoch
-            self.wandb.run.summary["next_epoch_index"] = self.start_epoch
+            self.wandb.summary["resumed_from_epoch_index"] = last_completed_epoch
+            self.wandb.summary["next_epoch_index"] = self.start_epoch
 
         # Update wandb run ID if available and re-initialize wandb only if needed.
         if "wandb_run_id" in checkpoint_data and checkpoint_data["wandb_run_id"]:
