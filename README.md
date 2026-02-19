@@ -9,7 +9,7 @@
 [![Colab](https://img.shields.io/badge/Examples-Colab-F9AB00?logo=googlecolab&logoColor=F9AB00)](https://colab.research.google.com/#fileId=https%3A//huggingface.co/AlbeRota/UnReflectAnything/blob/main/notebooks/UnReflectAnything.ipynb)
 [![Licence](https://img.shields.io/badge/MIT-License-1E811F)](https://mit-license.org/)
 ### RGB-Only Highlight Removal by Rendering Synthetic Specular Supervision
-UnReflectAnything inputs any RGB image and removes specular highlights, returning a clean diffuse-only outputs. We trained UnReflectAnything by synthetizing specularities and supervising in DINOv3 feature space.
+UnReflectAnything inputs any RGB image and removes specular highlights, returning a clean diffuse-only output. We trained UnReflectAnything by synthetizing specularities and supervising in DINOv3 feature space.
 
 
 UnReflectAnything works on both natural indoor and surgical/endoscopic domain data. 
@@ -25,7 +25,7 @@ pip install unreflectanything
 ```
 Install UnReflectAnything as a Python Package. 
 
-The minimum required Python version is 3.11, but development and all experiments have been bases on **Python 3.12**.
+The minimum required Python version is 3.11, but development and all experiments have been based on **Python 3.12**.
 
 For GPU support, make sure PyTorch comes with CUDA version for your system (see [PyTorch Get Started](https://pytorch.org/get-started/locally/)).
 
@@ -110,7 +110,7 @@ If you want to contribute or develop UnReflectAnything:
    ```
 
 ## Citation
-If you include UnReflectAnything in your pipline or research work, we encourage you cite our work. 
+If you include UnReflectAnything in your pipeline or research work, we encourage you cite our work. 
 Get the citation entry with 
 ```bash
 unreflectanything cite --bibtex
