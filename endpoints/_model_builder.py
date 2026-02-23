@@ -1,15 +1,15 @@
-"""Minimal config loading and model construction for inference-only use.
+"""Minimal config loading, model construction, and inference I/O for inference-only use.
 
 This module does not import utilities, logger, or engine code. It is used by
-endpoints/model_.py so that instantiating UnReflectModel only loads torch,
-transformers, and the models package.
+endpoints/model_.py and endpoints/inference_.py so that instantiating the model
+and running inference only load torch, transformers, and the models package.
 """
 
 from __future__ import annotations
 
 import importlib
 from pathlib import Path
-from typing import Any, Optional, Union
+from typing import Any, List, Optional, Sequence, Tuple, Union
 
 import torch
 import yaml
@@ -187,3 +187,61 @@ def create_model_from_config_minimal(
         nparams = sum(p.numel() for p in model.parameters())
         print(f"Model {model.__class__.__name__} created with {nparams:,} parameters.")
     return model
+
+
+# ---------------------------------------------------------------------------
+# Minimal inference I/O (no utilities.inference import)
+# ---------------------------------------------------------------------------
+
+
+def list_image_paths_minimal(
+    root: Path,
+    extensions: Sequence[str],
+    verbose: bool = False,
+) -> List[Path]:
+    """Collect image files under ``root`` matching the given extensions.
+
+    Same behavior as utilities.inference.list_image_paths but without
+    importing utilities. Used by endpoints/inference_.py.
+    """
+    lower_exts = tuple(ext.lower() for ext in extensions)
+    files = [
+        path
+        for path in root.rglob("*")
+        if path.is_file() and path.suffix.lower() in lower_exts
+    ]
+    if not files:
+        raise RuntimeError(f"No images found under {root}")
+    sorted_files = sorted(files)
+    if verbose:
+        print(f"Discovered {len(sorted_files)} images under {root}")
+    return sorted_files
+
+
+def save_diffuse_batch_minimal(
+    diffuse_batch: torch.Tensor,
+    batch_paths: Sequence[Path],
+    input_root: Path,
+    output_root: Path,
+    original_sizes: Optional[List[Tuple[int, int]]] = None,
+    resize_output: bool = True,
+) -> None:
+    """Write diffuse predictions to disk preserving directory structure.
+
+    Same behavior as utilities.inference.save_diffuse_batch but without
+    importing utilities. diffuse_batch: [B, 3, H, W].
+    """
+    from torchvision.transforms import functional as TF
+
+    diffuse_batch = diffuse_batch.clamp_(0.0, 1.0).cpu()
+    for idx, (tensor, input_path) in enumerate(zip(diffuse_batch, batch_paths)):
+        relative_path = input_path.relative_to(input_root)
+        output_path = output_root / relative_path
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+
+        if resize_output and original_sizes is not None:
+            original_size = original_sizes[idx]
+            tensor = TF.resize(tensor, original_size, antialias=True)
+
+        image = TF.to_pil_image(tensor)
+        image.save(output_path)

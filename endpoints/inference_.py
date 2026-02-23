@@ -249,8 +249,7 @@ def _inference_files_return_tensors(
     from PIL import Image
     from torchvision.transforms import functional as TF
 
-    from utilities.inference import list_image_paths
-
+    from ._model_builder import list_image_paths_minimal
     from ._shared import DEFAULT_IMAGE_EXTENSIONS
 
     mdl = _ensure_model(model, weights_path, config, device, verbose)
@@ -264,7 +263,7 @@ def _inference_files_return_tensors(
     image_paths = (
         [input_path]
         if input_path.is_file()
-        else list_image_paths(input_path, DEFAULT_IMAGE_EXTENSIONS)
+        else list_image_paths_minimal(input_path, DEFAULT_IMAGE_EXTENSIONS, verbose=verbose)
     )
 
     results = []
@@ -310,8 +309,7 @@ def _inference_files_save(
     from PIL import Image
     from torchvision.transforms import functional as TF
 
-    from utilities.inference import list_image_paths, save_diffuse_batch
-
+    from ._model_builder import list_image_paths_minimal, save_diffuse_batch_minimal
     from ._shared import DEFAULT_IMAGE_EXTENSIONS
 
     torch_device = _model_device(model)
@@ -334,7 +332,7 @@ def _inference_files_save(
     image_paths = (
         [input_path]
         if input_path.is_file()
-        else list_image_paths(input_dir, DEFAULT_IMAGE_EXTENSIONS)
+        else list_image_paths_minimal(input_dir, DEFAULT_IMAGE_EXTENSIONS, verbose=verbose)
     )
 
     model.eval()
@@ -375,7 +373,7 @@ def _inference_files_save(
                 out_tensor = TF.resize(out_tensor, original_sizes[0], antialias=True)
             TF.to_pil_image(out_tensor).save(output_path)
         else:
-            save_diffuse_batch(
+            save_diffuse_batch_minimal(
                 diffuse,
                 batch_paths,
                 input_dir,
