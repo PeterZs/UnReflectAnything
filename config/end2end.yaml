@@ -23,7 +23,7 @@ parameters:
           DROPOUT: 0.1  # Dropout rate in decoder layers
           OUTPUT_IMAGE_SIZE: [896,896]  # Output image resolution [height, width]
           OUTPUT_CHANNELS: 3  # Number of output channels (3 for RGB diffuse image)
-          DECODER_LR: 1.0e-5 # Custom learning rate for decoder (0.0 = frozen, 1.0 = same as base LR)
+          DECODER_LR: 1.0e-4 # Custom learning rate for decoder (0.0 = frozen, 1.0 = same as base LR)
           NUM_FUSION_BLOCKS_TRAINABLE: 1  # Number of fusion blocks to train (0-4, null = train all if DECODER_LR != 0)
           TRAIN_RGB_HEAD: True  # Whether to train RGB head (true/false, null = train if DECODER_LR != 0)
         highlight:
@@ -45,11 +45,11 @@ parameters:
         TOKEN_INPAINTER_LR: 1.0e-4  # Learning rate for token inpainter (can differ from base LR)
         DEPTH: 6  # Number of transformer blocks
         HEADS: 16  # Number of attention heads
-        DROP: 0.05 # Dropout rate 
+        DROP: 0.00 # Dropout rate 
         USE_POSITIONAL_ENCODING: True  # Enable 2D sinusoidal positional encodings
         USE_FINAL_NORM: True  # Enable final LayerNorm before output projection
         USE_LOCAL_PRIOR: True  # Blend local mean prior for masked seeds
-        LOCAL_PRIOR_WEIGHT: 1000  # Weight for local prior blending (1.0 = only mask_token, 0.0 = only local mean)
+        LOCAL_PRIOR_WEIGHT: 0.5  # Weight for local prior blending (1.0 = only mask_token, 0.0 = only local mean)
         LOCAL_PRIOR_KERNEL: 5  # Kernel size for local prior blending (> 1)
         SEED_NOISE_STD: 0.02  # Standard deviation of noise added to masked seeds during training  
 
@@ -57,7 +57,7 @@ parameters:
   INPAINT_MASK_THRESHOLD: 
     value: 0.2  # Threshold for inpaint mask
   INPAINT_MASK_DILATION: 
-    value: 40 # Dilation kernel size (pixels) for inpaint mask - Must be odd
+    value: 3 # Dilation kernel size (pixels) for inpaint mask - Must be odd
 
   USE_TORCH_COMPILE:  # Enable PyTorch 2.0 torch.compile for faster training (experimental)
     value: False
@@ -111,11 +111,11 @@ parameters:
         RESIZE_MODE: "resize+crop"  # Image resizing mode
         SAMPLE_EVERY_N: 4  # Load every Nth frame
 
-      SCANNET:
-        TRAIN_SCENES: ["train"]
-        VAL_SCENES: ["val"]
-        RESIZE_MODE: "resize+crop"
-        SAMPLE_EVERY_N: 5
+      # SCANNET:
+      #   TRAIN_SCENES: ["train"]
+      #   VAL_SCENES: ["val"]
+      #   RESIZE_MODE: "resize+crop"
+      #   SAMPLE_EVERY_N: 5
 
       OPENIMAGESV7:
         TRAIN_SCENES: ["thescene"]
@@ -135,7 +135,7 @@ parameters:
         LOAD_RGB_ONLY: True        
 
   BATCH_SIZE: # Max batch size with img size 896 is 32
-    value: 1    # Number of samples per batch (adjust based on GPU memory)
+    value: 8    # Number of samples per batch (adjust based on GPU memory)
   NUM_WORKERS:
     value: 12  # Number of data loading worker processes (0 = main process only, "auto" = 90% of CPU affinity)
   SHUFFLE:
@@ -179,7 +179,7 @@ parameters:
   GRADIENT_ACCUMULATION_STEPS:
     value: 1  # Number of steps to accumulate gradients before optimizer step (1 = no accumulation)
   WARMUP:
-    value: 100  # Number of warmup steps for learning rate schedule (linear warmup from 0 to LR)
+    value: 200  # Number of warmup steps for learning rate schedule (linear warmup from 0 to LR)
   GRADIENT_CLIPPING_MAX_NORM:
     value: 8  # Maximum gradient norm for clipping (set to -1 to disable clipping)
   LR_SCHEDULER: 
@@ -188,12 +188,7 @@ parameters:
         PATIENCE: 5  # Number ofd epochs to wait before reducing LR
         FACTOR: 0.1  # Factor by which LR is reduced (new_lr = old_lr * factor)
       COSINE:  # CosineAnnealingLR scheduler (cosine annealing schedule)
-        N_PERIODS: 0.5  # Number of cosine periods over training
-      # STEPWISE:  # StepLR scheduler (reduces LR at fixed step intervals)
-      #   N_STEPS: 4  # Number of times to reduce LR during training
-      #   GAMMA: 0.5  # Factor by which LR is reduced at each step (new_lr = old_lr * gamma)
-      # EXPONENTIAL:  # ExponentialLR scheduler (exponential decay)
-      #   GAMMA: 0.5  # Multiplicative factor for exponential decay
+        N_PERIODS: 0.125  # Number of cosine periods over training
 
   OPTIMIZER_BOOTSTRAP_NAME:
     value: "AdamW"  # Optimizer name for initial training phase ("Adam", "SGD", etc.)
@@ -209,7 +204,7 @@ parameters:
   SPECULAR_LOSS_WEIGHT:
     value: 0.0  # Weight for specular component reconstruction loss
   DIFFUSE_LOSS_WEIGHT:
-    value: 1.0  # Weight for diffuse component reconstruction loss
+    value: 0.0  # Weight for diffuse component reconstruction loss
   HIGHLIGHT_LOSS_WEIGHT:
     value: 1.0  # Weight for highlight mask regression loss
   TOKEN_INPAINT_LOSS_WEIGHT:
@@ -249,7 +244,7 @@ parameters:
 
   ### DIFFUSE HIGHLIGHT PENALTY
   WEIGHT_DIFFUSE_HIGHLIGHT_PENALTY:
-    value: 0.0 # Weight for penalty loss on highlights in diffuse decoder output (0.0 = disabled)
+    value: 0.1 # Weight for penalty loss on highlights in diffuse decoder output (0.0 = disabled)
   DIFFUSE_HL_THRESHOLD:
     value: 0.8  # Brightness/luminance threshold for detecting highlights in diffuse (0.0-1.0)
   DIFFUSE_HL_USE_CHARB:

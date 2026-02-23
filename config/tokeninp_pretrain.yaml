@@ -112,11 +112,11 @@ parameters:
         RESIZE_MODE: "resize+crop"  # Image resizing mode
         SAMPLE_EVERY_N: 4  # Load every Nth frame
 
-      SCANNET:
-        TRAIN_SCENES: ["train"]
-        VAL_SCENES: ["val"]
-        RESIZE_MODE: "resize+crop"
-        SAMPLE_EVERY_N: 5
+      # SCANNET:
+      #   TRAIN_SCENES: ["train"]
+      #   VAL_SCENES: ["val"]
+      #   RESIZE_MODE: "resize+crop"
+      #   SAMPLE_EVERY_N: 5
 
       OPENIMAGESV7:
         TRAIN_SCENES: ["thescene"]
@@ -190,13 +190,7 @@ parameters:
         FACTOR: 0.1  # Factor by which LR is reduced (new_lr = old_lr * factor)
       COSINE:  # CosineAnnealingLR scheduler (cosine annealing schedule)
         N_PERIODS: 0.5  # Number of cosine periods over training
-      # STEPWISE:  # StepLR scheduler (reduces LR at fixed step intervals)
-      #   N_STEPS: 4  # Number of times to reduce LR during training
-      #   GAMMA: 0.5  # Factor by which LR is reduced at each step (new_lr = old_lr * gamma)
-      # EXPONENTIAL:  # ExponentialLR scheduler (exponential decay)
-      #   GAMMA: 0.5  # Multiplicative factor for exponential decay
-
-
+        
   OPTIMIZER_BOOTSTRAP_NAME:
     value: "AdamW"  # Optimizer name for initial training phase ("Adam", "SGD", etc.)
   EARLY_STOPPING_PATIENCE:

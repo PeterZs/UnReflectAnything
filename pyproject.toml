@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "unreflectanything"
-version = "1.0.1"
+version = "1.0.2"
 description = "Deep learning method for removing specular reflections from RGB images."
 readme = "README.md"
 requires-python = ">=3.11"
@@ -47,7 +47,6 @@ dependencies = [
     "torchvision==0.24.1",
     "tqdm==4.67.3",
     "transformers",
-
 ]
 
 [project.scripts]
