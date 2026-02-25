@@ -17,7 +17,7 @@ UnReflectAnything works on both natural indoor and surgical/endoscopic domain da
 ---
 ![examples](https://raw.githubusercontent.com/alberto-rota/UnReflectAnything/refs/heads/main/assets/header.png)
 
-> [!IMPORTANT](Pretrained weight will be available soon)
+> [!IMPORTANT]
 > The maintainers are still working on an official API and Weights release for UnReflectAnything. In v1.0.2 the model is available from the API with `pretrained=False` by deafault, and forecefully setting it `True` will display a warning and weights will not be downloaded. Stay tuned for he official release!
 
 ## Installation
