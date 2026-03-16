@@ -110,7 +110,7 @@ def prepare_decomposition_dicts_for_logging(
         gt_decomposition.pop(key, None)
     for key in ("tokens_completed", "tokens_inpainted"):
         pred_decomposition.pop(key, None)
-    pred_decomposition.pop("patch_mask", None)
+    # pred_decomposition.pop("patch_mask", None)
 
 
 def create_visualization_images(

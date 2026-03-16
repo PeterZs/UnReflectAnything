@@ -1039,6 +1039,55 @@ def saturation_ring_blob_consistency(
     return (total / count).reshape(())
 
 
+def dark_region_consistency_loss(
+    diffuse_rgb: torch.Tensor,
+    hole_mask: torch.Tensor,
+    ring_mask: torch.Tensor,
+    dark_threshold: float = 0.2,
+) -> torch.Tensor:
+    """
+    Enforce mean consistency between hole and ring ONLY when the ring is dark.
+    This prevents 'purple ghosts' in dark regions without darkening bright regions.
+
+    Args:
+        diffuse_rgb: (B, 3, H, W) diffuse RGB image
+        hole_mask: (B, 1, H, W) hole mask (1 = hole region)
+        ring_mask: (B, 1, H, W) ring mask (1 = boundary ring)
+        dark_threshold: Threshold below which consistency is enforced (default: 0.2)
+
+    Returns:
+        Scalar weighted consistency loss
+    """
+    # Compute per-sample mean of the ring
+    # mean_r: (B, C, 1, 1)
+    mean_r = safe_mean(diffuse_rgb, ring_mask)
+    
+    # Compute luminance of the ring mean (avg of channels)
+    # lum_r: (B, 1, 1, 1)
+    lum_r = mean_r.mean(dim=1, keepdim=True)
+    
+    # Compute weight: 1.0 if lum_r == 0, 0.0 if lum_r >= threshold
+    # weight: (B, 1, 1, 1)
+    weight = (1.0 - (lum_r / dark_threshold)).clamp(min=0.0, max=1.0)
+    
+    # If all weights are zero, return 0
+    if weight.sum() == 0:
+        return torch.tensor(0.0, device=diffuse_rgb.device, dtype=diffuse_rgb.dtype)
+
+    # Compute mean of the hole
+    # mean_h: (B, C, 1, 1)
+    mean_h = safe_mean(diffuse_rgb, hole_mask)
+    
+    # L1 difference between hole mean and ring mean
+    diff = (mean_h - mean_r).abs() # (B, C, 1, 1)
+    
+    # Weighted loss
+    # Average over channels and batch
+    loss = (diff * weight).mean()
+    
+    return loss
+
+
 # ============================================================================
 # IMAGE RECONSTRUCTION UTILITY FUNCTIONS
 # ============================================================================

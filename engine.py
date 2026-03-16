@@ -862,7 +862,7 @@ class Engine:
                 ### Forward pass
                 model_input = {
                     "rgb": gt_decomposition["rgb_highlighted"],
-                    "inpaint_mask_override": pixel_inpaint_mask,
+                    # "inpaint_mask_override": pixel_inpaint_mask,
                     "inpaint_mask_threshold": self.config.INPAINT_MASK_THRESHOLD,
                     "inpaint_mask_dilation": self.config.INPAINT_MASK_DILATION,
                 }

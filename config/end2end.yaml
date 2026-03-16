@@ -23,7 +23,7 @@ parameters:
           DROPOUT: 0.1  # Dropout rate in decoder layers
           OUTPUT_IMAGE_SIZE: [896,896]  # Output image resolution [height, width]
           OUTPUT_CHANNELS: 3  # Number of output channels (3 for RGB diffuse image)
-          DECODER_LR: 1.0e-4 # Custom learning rate for decoder (0.0 = frozen, 1.0 = same as base LR)
+          DECODER_LR: 1.0e-6 # Custom learning rate for decoder (0.0 = frozen, 1.0 = same as base LR)
           NUM_FUSION_BLOCKS_TRAINABLE: 1  # Number of fusion blocks to train (0-4, null = train all if DECODER_LR != 0)
           TRAIN_RGB_HEAD: True  # Whether to train RGB head (true/false, null = train if DECODER_LR != 0)
         highlight:
@@ -42,14 +42,14 @@ parameters:
         TOKEN_INPAINTER_CLASS: "TokenInpainter_Prior"  # Token inpainter class name
         TOKEN_INPAINTER_MODULE: "token_inpainters"  # Module name to import token inpainter from
         # FROM_PRETRAINED: "token_inpainter.pth"  # Path to pretrained token inpainter weights (optional)
-        TOKEN_INPAINTER_LR: 1.0e-4  # Learning rate for token inpainter (can differ from base LR)
+        TOKEN_INPAINTER_LR: 1.0e-5  # Learning rate for token inpainter (can differ from base LR)
         DEPTH: 6  # Number of transformer blocks
         HEADS: 16  # Number of attention heads
         DROP: 0.00 # Dropout rate 
         USE_POSITIONAL_ENCODING: True  # Enable 2D sinusoidal positional encodings
         USE_FINAL_NORM: True  # Enable final LayerNorm before output projection
         USE_LOCAL_PRIOR: True  # Blend local mean prior for masked seeds
-        LOCAL_PRIOR_WEIGHT: 0.5  # Weight for local prior blending (1.0 = only mask_token, 0.0 = only local mean)
+        LOCAL_PRIOR_WEIGHT: 0.2
         LOCAL_PRIOR_KERNEL: 5  # Kernel size for local prior blending (> 1)
         SEED_NOISE_STD: 0.02  # Standard deviation of noise added to masked seeds during training  
 
@@ -161,7 +161,7 @@ parameters:
   DATASET_HIGHLIGHT_DILATION:
     value: 25  # Dilation kernel size (pixels) for dataset highlight masks
   DATASET_HIGHLIGHT_THRESHOLD:
-    value: 0.85  # Brightness/luminance threshold (0-1) for detecting highlights in dataset images
+    value: 0.60  # Lowered from 0.85 to aggressively mask real highlights from supervision
   DATASET_HIGHLIGHT_USE_LUMINANCE:
     value: True  # If True, use perceptually-weighted luminance (0.299*R + 0.587*G + 0.114*B) for dataset highlights; if False, use simple mean brightness
   HIGHLIGHT_COLOR:
@@ -175,7 +175,7 @@ parameters:
   WEIGHT_DECAY:   
     value: 0.0 # L2 regularization weight (0.0 = no weight decay)
   EPOCHS:
-    value: 10  # Maximum number of training epochs
+    value: 100  # Maximum number of training epochs
   GRADIENT_ACCUMULATION_STEPS:
     value: 1  # Number of steps to accumulate gradients before optimizer step (1 = no accumulation)
   WARMUP:
@@ -198,15 +198,15 @@ parameters:
     value: 1000  # Number of training steps between model checkpoints
   
   DATASET_HIGHLIGHT_SUPERVISION_THRESHOLD:
-    value: 0.1  # Pixel highlights above this threshold (should be low) are excluded from supervision
+    value: 0.01  # Pixel highlights above this threshold (should be low) are excluded from supervision
 
   ### LOSS WEIGHTS (relative to the total loss, NOT NORMALIZED LATER)                                                                              
   SPECULAR_LOSS_WEIGHT:
     value: 0.0  # Weight for specular component reconstruction loss
   DIFFUSE_LOSS_WEIGHT:
-    value: 0.0  # Weight for diffuse component reconstruction loss
+    value: 1.0  # Weight for diffuse component reconstruction loss
   HIGHLIGHT_LOSS_WEIGHT:
-    value: 1.0  # Weight for highlight mask regression loss
+    value: 0.0  # Weight for highlight mask regression loss
   TOKEN_INPAINT_LOSS_WEIGHT:
     value: 1.0  # Weight for token-space inpainting loss (L1 + cosine similarity in feature space)
   IMAGE_RECONSTRUCTION_LOSS_WEIGHT:
@@ -232,7 +232,7 @@ parameters:
     value: 2.0      # Focal loss gamma parameter (0.0 = standard BCE, 1.0-2.0 helps with gradient vanishing)
   
   WEIGHT_SEAM:
-    value: 0.5  # Weight for gradient matching loss on saturation ring
+    value: 0.0  # Weight for gradient matching loss on saturation ring
   RING_DILATE_KERNEL:
     value: 17  # Dilation kernel size (odd number) for creating ring mask around highlights
   SEAM_USE_CHARB:
@@ -244,9 +244,9 @@ parameters:
 
   ### DIFFUSE HIGHLIGHT PENALTY
   WEIGHT_DIFFUSE_HIGHLIGHT_PENALTY:
-    value: 0.1 # Weight for penalty loss on highlights in diffuse decoder output (0.0 = disabled)
+    value: 0.01 # Increased from 0.1 to strongly penalize bright inpainted spots
   DIFFUSE_HL_THRESHOLD:
-    value: 0.8  # Brightness/luminance threshold for detecting highlights in diffuse (0.0-1.0)
+    value: 0.6  # Lowered from 0.8 to catch milder highlights
   DIFFUSE_HL_USE_CHARB:
     value: True  # Use Charbonnier loss instead of L1 for diffuse highlight penalty
   DIFFUSE_HL_PENALTY_MODE:

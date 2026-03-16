@@ -1142,9 +1142,11 @@ class HighlightRender(nn.Module):
             )
             # dataset_highlights_bool_mask = (dataset_highlights_soft_mask > 0).int()
             result["dataset_highlights_soft_mask"] = dataset_highlights_soft_mask
+            # Fix: Check soft mask > 0 (or a small epsilon) to respect the original threshold logic.
+            # The previous logic (soft > threshold) effectively applied the threshold twice.
             highlight_region = (
-                dataset_highlights_soft_mask > dataset_highlight_threshold
-            )  # tune threshold
+                dataset_highlights_soft_mask > 0.01
+            )
 
             # 3. Dilate highlights (expand the forbidden area)
             if (

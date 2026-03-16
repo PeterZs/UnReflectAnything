@@ -16,6 +16,7 @@ from loss_utils import (
     DiffuseHighlightPenaltyLoss,
     reconstruct_image_from_components,
     _total_variation,
+    dark_region_consistency_loss,
 )
 
 
@@ -111,6 +112,10 @@ class UnReflectLoss(nn.Module):
         diffuse_hl_penalty_mode: str = "brightness",  # "brightness" or "pixel"
         diffuse_hl_target_brightness: float = None,  # Target brightness/luminance (None = use threshold)
         diffuse_hl_use_luminance: bool = False,  # Use perceptually-weighted luminance instead of mean brightness
+        # Ring consistency loss parameters
+        weight_ring_consistency: float = 0.0, # Weight for statistical consistency between hole and ring
+        ring_consistency_var_weight: float = 0.5, # Weight for variance term
+        ring_consistency_texture_weight: float = 1.0, # Weight for texture term
         **kwargs,
     ):
         super().__init__()
@@ -129,6 +134,11 @@ class UnReflectLoss(nn.Module):
         # Context and seam loss weights
         self.weight_seam = weight_seam
         self.ring_dilate_kernel = ring_dilate_kernel
+
+        # Ring consistency parameters
+        self.weight_ring_consistency = weight_ring_consistency
+        self.ring_consistency_var_weight = ring_consistency_var_weight
+        self.ring_consistency_texture_weight = ring_consistency_texture_weight
 
         # Token-space loss parameters
         self.weight_token_inpaint = weight_token_inpaint
@@ -384,6 +394,38 @@ class UnReflectLoss(nn.Module):
             losses["HPenalty"] = torch.zeros(())
 
         # ====================================================================
+        # Ring Consistency Loss (Adaptive Dark Region Consistency)
+        # ====================================================================
+        # Enforce consistency only when surrounding ring is dark to prevent purple ghosts
+        # without darkening bright regions.
+        if self.weight_ring_consistency > 0 and "diffuse" in prediction:
+            diffuse_rgb = prediction["diffuse"][:, :3]
+            # Create ring mask using the same kernel as SeamLoss
+            pad = self.ring_dilate_kernel // 2
+            dilated = nn.functional.max_pool2d(
+                pixel_inpaint_mask.float(), 
+                kernel_size=self.ring_dilate_kernel, 
+                stride=1, 
+                padding=pad
+            )
+            ring_mask = (dilated - pixel_inpaint_mask.float()).clamp(0, 1)
+            
+            # If ring is empty (no holes), loss is zero
+            if ring_mask.sum() > 0:
+                # Use the new adaptive dark region consistency loss
+                rc_loss = dark_region_consistency_loss(
+                    diffuse_rgb,
+                    pixel_inpaint_mask.float(),
+                    ring_mask,
+                    dark_threshold=0.2 # Threshold for "dark" region
+                )
+                losses["RingConsistency"] = rc_loss
+            else:
+                losses["RingConsistency"] = torch.zeros(())
+        else:
+            losses["RingConsistency"] = torch.zeros(())
+
+        # ====================================================================
         # Compute total loss
         # ====================================================================
         total = 0.0
@@ -407,6 +449,7 @@ class UnReflectLoss(nn.Module):
         total = total + self.weight_seam * losses["Seam"]
         total = total + self.weight_token_inpaint * losses["TokenInpaint"]
         total = total + self.weight_diffuse_highlight_penalty * losses["HPenalty"]
+        total = total + self.weight_ring_consistency * losses["RingConsistency"]
 
         losses["total"] = total
         return losses

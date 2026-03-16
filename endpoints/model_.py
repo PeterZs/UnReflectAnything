@@ -63,9 +63,6 @@ def model(
     Returns:
         An ``UnReflectModel`` instance (with or without pretrained weights).
     """
-    if pretrained:
-        print("Pretrained weights for UnReflectAnything have not been published yet: stay tuned! ")
-        pretrained = False
     return UnReflectModel(
         pretrained=pretrained,
         weights_path=weights_path,
