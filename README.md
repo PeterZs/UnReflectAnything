@@ -3,7 +3,7 @@
 [![Project](https://img.shields.io/badge/Project-Webpage-ff611b?logo=googlehome&logoColor=ff611b)](https://alberto-rota.github.io/UnReflectAnything/)
 [![PyPI](https://img.shields.io/pypi/v/unreflectanything?color=76b1f3&label=pip%20install&logo=python&logoColor=76b1f3)](https://pypi.org/project/unreflectanything/)
 [![Paper](https://img.shields.io/badge/Paper-arXiv-B31B1B?logo=arxiv&logoColor=B31B1B)](https://arxiv.org/abs/2512.09583)
-[![Demo](https://img.shields.io/badge/Demo-HF%20-FFD21E?logo=huggingface&logoColor=FFD21E)](https://huggingface.co/spaces/AlbeRota/UnReflectAnything)
+[![Demo](https://img.shields.io/badge/Demo-HF%20-FFD21E?logo=huggingface&logoColor=FFD21E)](https://huggingface.co/spaces/AlbeRota/UnReflectAnything-Demo)
 [![Modelcard](https://img.shields.io/badge/Model%20Card-HF%20-FFD21E?logo=huggingface&logoColor=FFD21E)](https://huggingface.co/AlbeRota/UnReflectAnything)
 [![Wiki](https://img.shields.io/badge/API-Wiki-9187FF?logo=wikipedia&logoColor=9187FF)](https://github.com/alberto-rota/UnReflectAnything/wiki)
 [![Colab](https://img.shields.io/badge/Examples-Colab-F9AB00?logo=googlecolab&logoColor=F9AB00)](https://colab.research.google.com/#fileId=https%3A//huggingface.co/AlbeRota/UnReflectAnything/blob/main/notebooks/UnReflectAnything.ipynb)
@@ -45,7 +45,7 @@ unreflectanything download --images
 
 Weights are stored by default in `~/.cache/unreflectanything/weights` (or `$XDG_CACHE_HOME/unreflectanything/weights` if set ; `%LOCALAPPDATA%\unreflectanything` for Windows). Use `--output-dir` to choose another location. 
 
-Both the weights and images are stored on the [HuggingFace Model Repo](https://huggingface.co/spaces/AlbeRota/UnReflectAnything).
+Both the weights and images are stored on the [HuggingFace Model Repo](https://huggingface.co/spaces/AlbeRota/UnReflectAnything-Demo).
 
 ## Enable shell completion
 Shell completion is available for the `bash` and `zsh` shells. Run

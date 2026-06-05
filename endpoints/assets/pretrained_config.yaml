@@ -49,6 +49,6 @@ parameters:
         USE_POSITIONAL_ENCODING: True  # Enable 2D sinusoidal positional encodings
         USE_FINAL_NORM: True  # Enable final LayerNorm before output projection
         USE_LOCAL_PRIOR: True  # Blend local mean prior for masked seeds
-        LOCAL_PRIOR_WEIGHT: 0.2  # Weight for local prior blending (1.0 = only mask_token, 0.0 = only local mean)
+        LOCAL_PRIOR_WEIGHT: 0.5  # Weight for local prior blending (1.0 = only mask_token, 0.0 = only local mean)
         LOCAL_PRIOR_KERNEL: 5  # Kernel size for local prior blending (> 1)
         SEED_NOISE_STD: 0.02  # Standard deviation of noise added to masked seeds during training  

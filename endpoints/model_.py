@@ -127,25 +127,37 @@ class UnReflectModel(_nn_module_base()):
         """
         super().__init__()
         import torch
-        import importlib
         from ._shared import _resolve_device
-        from ._model_builder import load_config_minimal, create_model_from_config_minimal
+        from ._model_builder import create_model_from_config_minimal
         # ── 1. Resolve target device ──────────────────────────────────
         torch_device = torch.device(_resolve_device(device))
 
-        # ── 2. Resolve & load model configuration ─────────────────────
-        #    `config` (object) takes priority over `config_path` (file).
-        if config is None and config_path is None:
-            pkg = importlib.resources.files("unreflectanything")
-            config_path = pkg / "assets" / "pretrained_config.yaml"
-        model_config = self._resolve_config(config, config_path, verbose)
-        # ── 3. Build model architecture from config (no utilities/engine imports) ─
+        # ── 2. Load checkpoint up-front ───────────────────────────────
+        #    Loaded *before* building so the checkpoint's embedded training
+        #    config can drive the architecture (see `_resolve_config`). This
+        #    guarantees the built model matches the weights instead of relying
+        #    on the shipped YAML staying in sync with the released checkpoint —
+        #    a mismatch in non-parametric forward hyper-parameters (e.g. the
+        #    token-inpainter local prior) loads cleanly under strict=True yet
+        #    silently changes the output.
+        checkpoint = (
+            self._load_checkpoint(weights, weights_path, torch_device, verbose)
+            if pretrained
+            else None
+        )
+
+        # ── 3. Resolve model configuration ────────────────────────────
+        #    Priority: explicit `config` / `config_path`  >  config embedded in
+        #    the checkpoint (sanitized for inference)  >  packaged
+        #    pretrained_config.yaml.
+        model_config = self._resolve_config(config, config_path, checkpoint, verbose)
+
+        # ── 4. Build model architecture (no utilities/engine imports) ──
         inner = create_model_from_config_minimal(model_config, torch_device, verbose=verbose)
-        # ── 4. Load pretrained weights (skipped when pretrained=False) ─
+
+        # ── 5. Load pretrained weights (skipped when pretrained=False) ─
         if pretrained:
-            sd = self._resolve_and_load_weights(
-                weights, weights_path, torch_device, verbose,
-            )
+            sd = self._extract_state_dict(checkpoint)
             sd = self._strip_key_prefixes(inner, sd, verbose)
             inner.load_state_dict(sd, strict=strict)
             inner.eval()
@@ -171,13 +183,23 @@ class UnReflectModel(_nn_module_base()):
     # ------------------------------------------------------------------
 
     @staticmethod
-    def _resolve_config(config, config_path, verbose):
-        """Return a parsed DotMap config (minimal loader; no utilities import)."""
+    def _resolve_config(config, config_path, checkpoint, verbose):
+        """Return a parsed DotMap config describing the architecture to build.
 
-        from ._shared import DEFAULT_CONFIG_FILENAME, get_cache_dir
+        Resolution priority:
+            1. Explicit in-memory ``config`` (user-supplied) — used as-is.
+            2. Explicit ``config_path`` (user-supplied YAML) — loaded from disk.
+            3. Config embedded in ``checkpoint`` (``checkpoint["config"]``),
+               sanitized for inference. Following the checkpoint's own config
+               keeps the architecture in lock-step with the weights, so a stale
+               shipped YAML can no longer silently corrupt the model.
+            4. Packaged ``pretrained_config.yaml`` (fallback when there is no
+               embedded config — e.g. a bare state-dict or ``pretrained=False``).
+        """
+        from ._shared import DEFAULT_CONFIG_FILENAME
         from ._model_builder import load_config_minimal
 
-        # --- In-memory config takes priority ---
+        # 1. In-memory config — highest priority; respect explicit user input.
         if config is not None:
             parsed = load_config_minimal(config=config)
             if parsed is None:
@@ -188,51 +210,150 @@ class UnReflectModel(_nn_module_base()):
                 print("Loaded model configuration from in-memory object.")
             return parsed
 
-        # --- Fall back to filesystem path ---
-        if config_path is None:
-            config_path = get_cache_dir("configs") / DEFAULT_CONFIG_FILENAME
-        config_path = Path(config_path)
-        if config_path.is_dir():
-            config_path = config_path / DEFAULT_CONFIG_FILENAME
+        # 2. Explicit config file.
+        if config_path is not None:
+            config_path = Path(config_path)
+            if config_path.is_dir():
+                config_path = config_path / DEFAULT_CONFIG_FILENAME
+            parsed = load_config_minimal(config_path=config_path)
+            if verbose:
+                print(f"Loaded model configuration from: `{config_path}`")
+            return parsed
 
-        parsed = load_config_minimal(config_path=config_path)
+        # 3. Config embedded in the checkpoint (sanitized for inference).
+        embedded = UnReflectModel._extract_embedded_config(checkpoint)
+        if embedded is not None:
+            sanitized = UnReflectModel._sanitize_embedded_config(embedded, verbose)
+            if verbose:
+                print("Built architecture from the checkpoint's embedded training config.")
+            return load_config_minimal(config=sanitized)
+
+        # 4. Packaged pretrained_config.yaml (fallback).
+        packaged = UnReflectModel._packaged_config_path()
+        parsed = load_config_minimal(config_path=packaged)
         if verbose:
-            print(f"Loaded model configuration from: `{config_path}`")
+            print(f"Loaded model configuration from packaged default: `{packaged}`")
         return parsed
 
     @staticmethod
-    def _resolve_and_load_weights(weights, weights_path, device, verbose):
-        """Return a flat ``state_dict`` ready for ``load_state_dict``.
+    def _packaged_config_path():
+        """Path to the ``pretrained_config.yaml`` shipped inside the package."""
+        import importlib.resources
 
-        Resolution order:
-            1. ``weights`` is a dict (state-dict) → returned as-is.
-            2. ``weights`` is a path               → loaded from disk.
-            3. ``weights_path`` (explicit path)     → loaded from disk.
-            4. Default cached weights file.
+        from ._shared import DEFAULT_CONFIG_FILENAME
 
-        Automatically unwraps training-checkpoint wrappers
-        (e.g. ``{"model_state_dict": {...}, ...}``).
+        pkg = importlib.resources.files("unreflectanything")
+        return pkg / "assets" / DEFAULT_CONFIG_FILENAME
+
+    @staticmethod
+    def _packaged_encoder_name():
+        """Encoder name declared in the packaged config (a public mirror), or None."""
+        from ._model_builder import load_config_minimal
+
+        try:
+            cfg = load_config_minimal(config_path=UnReflectModel._packaged_config_path())
+            enc = cfg.MODEL.RGB_ENCODER.ENCODER
+            return enc if isinstance(enc, str) and enc else None
+        except Exception:
+            return None
+
+    @staticmethod
+    def _extract_embedded_config(checkpoint):
+        """Return the architecture config embedded in a training checkpoint, or None.
+
+        A released checkpoint is a dict like
+        ``{"model_state_dict": ..., "config": <DotMap>, ...}`` whose ``config``
+        is the authoritative description of the architecture the weights belong
+        to. A bare state-dict has no such key.
+        """
+        if not isinstance(checkpoint, dict):
+            return None
+        cfg = checkpoint.get("config")
+        if cfg is None:
+            return None
+        # Guard against a stray "config" tensor key: a real config has a MODEL section.
+        try:
+            return cfg if "MODEL" in cfg else None
+        except TypeError:
+            return None
+
+    @staticmethod
+    def _sanitize_embedded_config(embedded, verbose):
+        """Return an inference-safe plain-dict copy of a checkpoint's training config.
+
+        Two adjustments make a *training* config safe to build from at inference:
+
+        * **Encoder** — training used the gated upstream DINOv3 repo; substitute
+          the encoder name the packaged config ships (a public mirror) so users
+          without gated access can build the (architecturally identical) model.
+          The encoder *weights* come from the checkpoint regardless.
+        * **FROM_PRETRAINED** — training seeded sub-modules from local decoder /
+          token-inpainter files that don't exist on an end-user machine (and
+          would raise ``FileNotFoundError`` during construction). The full
+          checkpoint state-dict supersedes them, so these references are dropped.
+        """
+        import copy
+
+        cfg = embedded.toDict() if hasattr(embedded, "toDict") else copy.deepcopy(dict(embedded))
+        model = cfg.get("MODEL")
+        if not isinstance(model, dict):
+            return cfg
+
+        # Encoder: prefer the packaged (public-mirror) encoder name.
+        rgb = model.get("RGB_ENCODER")
+        if isinstance(rgb, dict):
+            mirror = UnReflectModel._packaged_encoder_name()
+            if mirror and rgb.get("ENCODER") != mirror:
+                if verbose:
+                    print(
+                        f"Encoder '{rgb.get('ENCODER')}' -> '{mirror}' "
+                        "(packaged public mirror; weights come from the checkpoint)."
+                    )
+                rgb["ENCODER"] = mirror
+
+        # Strip FROM_PRETRAINED sub-weight references wherever they appear.
+        def _strip(d):
+            if isinstance(d, dict):
+                for key in ("FROM_PRETRAINED", "from_pretrained"):
+                    if d.get(key):
+                        d[key] = ""
+
+        decoders = model.get("DECODERS")
+        if isinstance(decoders, dict):
+            for params in decoders.values():
+                _strip(params)
+        _strip(model.get("DECODER"))
+        _strip(model.get("TOKEN_INPAINTER"))
+        return cfg
+
+    @staticmethod
+    def _load_checkpoint(weights, weights_path, device, verbose):
+        """Load and return the raw checkpoint object (full dict or bare state-dict).
+
+        Source resolution order:
+            1. ``weights`` (in-memory state-dict **or** path) — overrides ``weights_path``.
+            2. ``weights_path`` (explicit path).
+            3. Default cached checkpoint file.
+
+        The full object is returned *without* unwrapping ``model_state_dict`` so
+        the caller can also read an embedded ``config``. Use
+        :meth:`_extract_state_dict` to obtain the flat state-dict for loading.
         """
         import torch
         from ._shared import DEFAULT_WEIGHTS_FILENAME, get_cache_dir
 
-        # Pick the authoritative source: `weights` overrides `weights_path`
+        # `weights` overrides `weights_path`; default to the cached checkpoint.
         source = weights if weights is not None else weights_path
-
-        # Default to the cached checkpoint when nothing was provided
         if source is None:
             source = get_cache_dir("weights") / DEFAULT_WEIGHTS_FILENAME
 
-        # ── In-memory state-dict ──
+        # In-memory state-dict (already the weights themselves).
         if not _is_path(source):
-            sd = source
-            if isinstance(sd, dict):
-                sd = sd.get("model_state_dict", sd)
             if verbose:
                 print("Using in-memory state dict.")
-            return sd
+            return source
 
-        # ── Filesystem path ──
+        # Filesystem path.
         resolved = Path(source).expanduser().resolve()
         if not resolved.exists():
             raise FileNotFoundError(
@@ -242,12 +363,18 @@ class UnReflectModel(_nn_module_base()):
             )
         if verbose:
             print(f"Loading weights from: `{resolved}`")
-        
-        checkpoint = torch.load(resolved, map_location=device, weights_only=False)
+        return torch.load(resolved, map_location=device, weights_only=False)
 
-        # Unwrap training-checkpoint wrapper if present
+    @staticmethod
+    def _extract_state_dict(checkpoint):
+        """Return the flat parameter state-dict from a checkpoint object.
+
+        Unwraps the common training-checkpoint wrapper
+        (``{"model_state_dict": {...}, ...}``); a bare state-dict is returned
+        unchanged.
+        """
         if isinstance(checkpoint, dict):
-            checkpoint = checkpoint.get("model_state_dict", checkpoint)
+            return checkpoint.get("model_state_dict", checkpoint)
         return checkpoint
 
     @staticmethod
