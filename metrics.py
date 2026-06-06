@@ -230,12 +230,14 @@ def mse_metric(
 def psnr_metric(
     pred_image: torch.Tensor,
     target_image: torch.Tensor,
+    mask: Optional[torch.Tensor] = None,
     data_range: Optional[float] = None,
     reduction: Literal["mean", "none"] = "mean",
     eps: float = 1e-10,
 ) -> torch.Tensor:
     """
     Peak Signal-to-Noise Ratio (dB), computed from masked MSE.
+    - mask: optional binary mask; PSNR is computed only over masked pixels.
     - data_range: 1.0 for [0,1], 255.0 for [0,255]; inferred if None
     """
     _validate_pair(pred_image, target_image)
@@ -244,10 +246,10 @@ def psnr_metric(
     if data_range is None:
         data_range = _infer_data_range(torch.stack([x, y], dim=0))
 
-    # m = _prepare_mask(x, mask)
+    m = _prepare_mask(x, mask)
     sqerr = (x - y) ** 2
     mse_per = _masked_reduce_per_image(
-        sqerr.mean(dim=1, keepdim=True), torch.ones_like(x)
+        sqerr.mean(dim=1, keepdim=True), m
     ).clamp_min(eps)  # [B]
     psnr_per = 10.0 * torch.log10(
         (data_range**2) / mse_per

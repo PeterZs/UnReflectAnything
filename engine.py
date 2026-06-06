@@ -558,6 +558,7 @@ class Engine:
             self._log_memory_usage("Before backward pass")
 
         ERROR_IN_BACKWARD_PASS = False
+        NON_FINITE_GRAD = False
         try:
             loss_tensor.backward()
         except RuntimeError as e:
@@ -574,6 +575,11 @@ class Engine:
             try:
                 # Calculate gradient and weight norms for the whole model
                 grad_norm, weight_norm = optimization.get_norms(self.model.parameters())
+                # Guard against NaN/Inf gradients: a single optimizer.step() with
+                # non-finite grads silently poisons every weight (observed as
+                # MODEL_GradNorm=NaN in unique-sponge-1115). clip_grad_norm_ does NOT
+                # sanitize NaN, and the step below runs unconditionally otherwise.
+                NON_FINITE_GRAD = not np.isfinite(grad_norm)
 
                 # Calculate norms for specific submodules if requested
                 if submodules_to_monitor is not None:
@@ -607,8 +613,17 @@ class Engine:
 
         # Step only if warmup phase is finished and we are backpropagating the accumulated gradients
         if accumulate_gradients:
-            if not ERROR_IN_BACKWARD_PASS:
+            if not ERROR_IN_BACKWARD_PASS and not NON_FINITE_GRAD:
                 self.optimizer.step()
+                self.optimizer.zero_grad()
+            elif NON_FINITE_GRAD:
+                # Discard this update and clear the poisoned grads so they don't
+                # accumulate into the next step.
+                self.logger.warning(
+                    f">> [WARN]: Non-finite gradient norm ({grad_norm}) at batch "
+                    f"{self.step['Training_batch']} in epoch {self.step['epoch']} - "
+                    f"skipping optimizer step and clearing gradients."
+                )
                 self.optimizer.zero_grad()
             self.LRscheduler.step()
 
@@ -865,6 +880,9 @@ class Engine:
                     # "inpaint_mask_override": pixel_inpaint_mask,
                     "inpaint_mask_threshold": self.config.INPAINT_MASK_THRESHOLD,
                     "inpaint_mask_dilation": self.config.INPAINT_MASK_DILATION,
+                    "inpaint_feed_raw_mask": self.config.get(
+                        "INPAINT_FEED_RAW_MASK", False
+                    ),
                 }
                 # if self._distribute == "dp":
                 #     pred_decomposition = self.model(
@@ -995,6 +1013,7 @@ class Engine:
                     gt_decomposition,
                     phase,
                     pixel_supervision_mask,
+                    pixel_inpaint_mask,
                 )
                 metrics.update(eval_metrics)
 

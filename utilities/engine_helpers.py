@@ -10,7 +10,7 @@ import torch
 import torchvision.transforms as transforms
 import wandb
 
-from metrics import mse_metric, psnr_metric, ssim_metric
+from metrics import mse_metric, psnr_metric, ssim_metric, luminance_suppression_ratio
 
 
 def composite_specular_diffuse(
@@ -55,6 +55,7 @@ def compute_eval_metrics(
     gt_decomposition: dict,
     phase: str,
     pixel_supervision_mask: Optional[torch.Tensor] = None,
+    pixel_inpaint_mask: Optional[torch.Tensor] = None,
 ) -> Dict[str, float]:
     """
     Compute PSNR/SSIM/MSE for diffuse, specular, and rgb_highlighted (vectorized over batch).
@@ -62,11 +63,17 @@ def compute_eval_metrics(
     Args:
         pred_decomposition: Model output dict (diffuse, specular, rgb_highlighted).
         gt_decomposition: Ground truth dict with same keys.
-        phase: "Training", "Validation", or "Test". Mask used only when "Training".
+        phase: "Training", "Validation", or "Test". Supervision mask used only when "Training".
         pixel_supervision_mask: Optional [B, 1, H, W] mask for diffuse metrics.
+        pixel_inpaint_mask: Optional [B, 1, H, W] highlight/repair-region mask. Used to log
+            IN-MASK diffuse metrics in EVERY phase. The default diffuse metrics above are
+            computed over the supervision-complement (everything EXCEPT highlights), so they
+            are blind to whether the highlight was removed and are gameable by an identity
+            map; the in-mask metrics restrict to the region the model actually repairs and
+            are the faithful comparison/selection signal.
 
     Returns:
-        Dict of metric names to float values (e.g. "PSNR/diffuse", "SSIM/specular").
+        Dict of metric names to float values (e.g. "PSNR/diffuse", "PSNR/diffuse_inmask").
     """
     out: Dict[str, float] = {}
     eval_mask = pixel_supervision_mask if phase == "Training" else None
@@ -83,6 +90,32 @@ def compute_eval_metrics(
             out["MSE/diffuse"] = float(
                 mse_metric(pdiff, gt, mask=eval_mask, reduction="mean").item()
             )
+            # IN-MASK (highlight repair region) diffuse metrics — logged for all phases.
+            # NOTE: gt diffuse still contains REAL highlights, so these are most faithful
+            # over the SYNTHETIC-highlight portion; evaluate on a fixed held-out synthetic
+            # distribution for cross-run comparison. HighlightSuppression below is GT-free.
+            if pixel_inpaint_mask is not None:
+                im = pixel_inpaint_mask.detach().float()
+                out["PSNR/diffuse_inmask"] = float(
+                    psnr_metric(pdiff, gt, mask=im, reduction="mean").item()
+                )
+                out["SSIM/diffuse_inmask"] = float(
+                    ssim_metric(pdiff, gt, mask=im, reduction="mean").item()
+                )
+                out["MSE/diffuse_inmask"] = float(
+                    mse_metric(pdiff, gt, mask=im, reduction="mean").item()
+                )
+                if "rgb_highlighted" in gt_decomposition:
+                    # Fraction of luminance removed inside the mask (input -> diffuse).
+                    # Higher = stronger highlight removal. No clean GT required.
+                    out["HighlightSuppression/diffuse_inmask"] = float(
+                        luminance_suppression_ratio(
+                            gt_decomposition["rgb_highlighted"].detach(),
+                            pdiff,
+                            im,
+                            reduction="mean",
+                        ).item()
+                    )
         if "specular" in pred_decomposition and "specular" in gt_decomposition:
             ps = pred_decomposition["specular"].detach()
             gs = gt_decomposition["specular"].detach()

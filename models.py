@@ -1503,18 +1503,24 @@ class UnReflect_Model_TokenInpainter(UnReflect_Model):
 
         completed_tokens = []  # With gradients - for token loss
         completed_tokens_detached = []  # Detached - for decoders (prevents decoder loss from affecting TokenInpainter)
+        # Token-inpainter mask polarity. The TokenInpainter_Prior contract is
+        # True/1.0 = hole-to-inpaint (it overwrites True positions with the learned
+        # mask_token + clean-neighbour prior). The released checkpoint, however, was
+        # trained feeding the *visibility* mask (True = visible/teacher, False = hole) —
+        # i.e. with the polarity INVERTED vs the contract — so by default we keep that
+        # inversion for checkpoint compatibility. Set INPAINT_FEED_RAW_MASK=True
+        # (passed in as 'inpaint_feed_raw_mask') ONLY for a fresh-from-scratch run to
+        # feed the design-correct raw mask; this is INCOMPATIBLE with the released weights.
+        feed_raw_mask = bool(model_input_dict.get("inpaint_feed_raw_mask", False))
         for n, T in enumerate(tokens_list):  # (B,N,C)
-            # The released checkpoint was trained feeding the token inpainter the
-            # *visibility* mask (True/1.0 = visible/teacher, False/0.0 = hole), so we
-            # invert patch_inpaint_mask here. Passing the raw patch_inpaint_mask
-            # (True = hole) loads cleanly under strict=True but silently inverts which
-            # tokens get inpainted -> wrong output. Do not simplify this away without
-            # retraining and re-releasing the weights together.
-            if is_soft_mask:
-                visibility_mask = 1.0 - patch_inpaint_mask  # [B, N] float in [0,1]
+            if feed_raw_mask:
+                # Design-correct: True/1.0 = hole/highlight to inpaint.
+                inpaint_arg = patch_inpaint_mask
+            elif is_soft_mask:
+                inpaint_arg = 1.0 - patch_inpaint_mask  # [B, N] float in [0,1]
             else:
-                visibility_mask = torch.logical_not(patch_inpaint_mask)  # [B, N] bool
-            T_inpainted = self.token_inpaint(T, visibility_mask)
+                inpaint_arg = torch.logical_not(patch_inpaint_mask)  # [B, N] bool
+            T_inpainted = self.token_inpaint(T, inpaint_arg)
 
             # Blend: keep teacher tokens on context; use predicted tokens on masked patches
             if is_soft_mask:
