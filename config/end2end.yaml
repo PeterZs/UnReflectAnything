@@ -150,7 +150,7 @@ parameters:
   MOGE_MODEL:
     value: "Ruicheng/moge-2-vits-normal"  # MoGe model name for normal estimation (HuggingFace format)
   SURFACE_ROUGHNESS:
-    value: [80.0, 2000.0]  # Blinn-Phong surface roughness exponent (higher = sharper highlights)
+    value: [20.0, 2000.0]  # Blinn-Phong surface roughness exponent — sampled log-uniformly in this range (higher = sharper highlights)
   INTENSITY:
     value: [0.5, 1.0]  # Specular highlight intensity multiplier
   LIGHT_DISTANCE_RANGE:
