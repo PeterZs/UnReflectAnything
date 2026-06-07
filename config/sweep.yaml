@@ -1,150 +1,150 @@
-### 8-AGENT GRID SWEEP — three binary axes implicated in the GOOD↔WORSE regression
-### centred on config/end2end.yaml:
+### 8-AGENT RANDOM SWEEP — five hyperparameters identified as primary regression
+### causes in the GOOD↔WORSE run analysis, swept around config/end2end.yaml:
 ###
-###   (1) MODEL   — stable (GOOD-run recipe)     vs  aggressive (end2end.yaml recipe)
-###   (2) SURFACE_ROUGHNESS — [20,200] broad-only vs  [20,2000] full log-uniform range
-###   (3) HIGHLIGHT_LOSS_WEIGHT — 1.0 supervised head vs 0.0 frozen head
+###   SURFACE_ROUGHNESS           — highlight breadth  (#1 cause: sharp specks vs soft blobs)
+###   INTENSITY                   — highlight strength (dim signal in WORSE runs)
+###   HIGHLIGHT_LOSS_WEIGHT       — supervised vs frozen highlight head
+###   WEIGHT_DIFFUSE_HIGHLIGHT_PENALTY — direct "no bright output pixels" signal
+###   INPAINT_MASK_DILATION       — mask coverage around highlights
 ###
-### 2 × 2 × 2 = 8 exact grid runs. All other params fixed at the optimal values
-### established from the run analysis (broad highlights, strong penalty, stable mask dilation).
+### Architecture (MODEL) is fixed at the stable GOOD-run recipe (DETACH=True,
+### 1 fusion block, dropout=0.1, highlight head LR=5e-4). This isolates the
+### highlight-distribution and loss choices from the architectural stability
+### question — the latter is already settled by the analysis.
 ###
-### To launch:
-###   wandb sweep config/sweep.yaml          # prints sweep ID
-###   wandb agent unreflect-anything/UnReflectAnything/<sweep-id>   # ×8 on 8 separate GPUs
+### Metric: Validation/PSNR/diffuse_inmask — in-mask metric that measures how
+### well the model actually removes highlights (not gameable by identity).
 ###
-### Each agent runs a single training process (DISTRIBUTE: singlegpu).
-### For multi-GPU-per-agent runs, replace with:
-###   torchrun --nproc_per_node=N sweep_agent.py
+### To launch (8 single-GPU agents, one config each):
+###   SWEEP_ID=$(wandb sweep config/sweep.yaml 2>&1 | tail -1 | awk '{print $NF}')
+###   for i in $(seq 8); do
+###       CUDA_VISIBLE_DEVICES=$((i-1)) wandb agent --count 1 $SWEEP_ID &
+###   done
+###
+### Or with SLURM: submit 8 jobs each running:
+###   wandb agent --count 1 unreflect-anything/UnReflectAnything/<sweep-id>
 
-method: grid
+method: random
+run_cap: 8
+
 metric:
   goal: maximize
   name: Validation/PSNR/diffuse_inmask
 
-program: sweep_agent.py
+early_terminate:
+  type: hyperband
+  min_iter: 5
+  eta: 2
 
+program: sweep_agent.py
 project: UnReflectAnything
 entity: unreflect-anything
 
 parameters:
 
-  # ── SWEPT DIMENSIONS (3 binary → 8 combinations) ────────────────────────────
-
-  MODEL:
-    values:
-      - # stable — GOOD-run architecture (DETACH, low LR, 1 fusion block, supervised highlight head)
-        MODEL_CLASS: "UnReflect_Model_TokenInpainter"
-        MODEL_MODULE: "models"
-        DETACH_INPAINTED_TOKENS_FOR_DECODER: True
-        RGB_ENCODER:
-          ENCODER: "facebook/dinov3-vitl16-pretrain-lvd1689m"
-          IMAGE_SIZE: 896
-          RETURN_SELECTED_LAYERS: [3, 6, 9, 12]
-          RGB_ENCODER_LR: 0.0
-        DECODERS:
-          diffuse:
-            FEATURE_DIM: 1024
-            REASSEMBLE_OUT_CHANNELS: [768,1024,1536,2048]
-            REASSEMBLE_FACTORS: [4.0, 2.0, 1.0, 0.5]
-            READOUT_TYPE: "ignore"
-            FROM_PRETRAINED: "diffuse_decoder.pt"
-            USE_BN: False
-            DROPOUT: 0.1
-            OUTPUT_IMAGE_SIZE: [896,896]
-            OUTPUT_CHANNELS: 3
-            DECODER_LR: 1.0e-4
-            NUM_FUSION_BLOCKS_TRAINABLE: 1
-            TRAIN_RGB_HEAD: True
-          highlight:
-            FEATURE_DIM: 1024
-            REASSEMBLE_OUT_CHANNELS: [96,192,384,768]
-            REASSEMBLE_FACTORS: [4.0, 2.0, 1.0, 0.5]
-            READOUT_TYPE: "ignore"
-            FROM_PRETRAINED: "highlight_decoder.pt"
-            USE_BN: False
-            DROPOUT: 0.1
-            OUTPUT_IMAGE_SIZE: [896,896]
-            OUTPUT_CHANNELS: 1
-            DECODER_LR: 5.0e-4
-            NUM_FUSION_BLOCKS_TRAINABLE: null
-        TOKEN_INPAINTER:
-          TOKEN_INPAINTER_CLASS: "TokenInpainter_Prior"
-          TOKEN_INPAINTER_MODULE: "token_inpainters"
-          TOKEN_INPAINTER_LR: 1.0e-4
-          DEPTH: 6
-          HEADS: 16
-          DROP: 0.05
-          USE_POSITIONAL_ENCODING: True
-          USE_FINAL_NORM: True
-          USE_LOCAL_PRIOR: True
-          LOCAL_PRIOR_WEIGHT: 0.4
-          LOCAL_PRIOR_KERNEL: 5
-          SEED_NOISE_STD: 0.02
-      - # aggressive — end2end.yaml architecture (no detach, higher LR, 4 fusion blocks, frozen highlight head)
-        MODEL_CLASS: "UnReflect_Model_TokenInpainter"
-        MODEL_MODULE: "models"
-        DETACH_INPAINTED_TOKENS_FOR_DECODER: False
-        RGB_ENCODER:
-          ENCODER: "facebook/dinov3-vitl16-pretrain-lvd1689m"
-          IMAGE_SIZE: 896
-          RETURN_SELECTED_LAYERS: [3, 6, 9, 12]
-          RGB_ENCODER_LR: 0.0
-        DECODERS:
-          diffuse:
-            FEATURE_DIM: 1024
-            REASSEMBLE_OUT_CHANNELS: [768,1024,1536,2048]
-            REASSEMBLE_FACTORS: [4.0, 2.0, 1.0, 0.5]
-            READOUT_TYPE: "ignore"
-            FROM_PRETRAINED: "diffuse_decoder.pt"
-            USE_BN: False
-            DROPOUT: 0.0
-            OUTPUT_IMAGE_SIZE: [896,896]
-            OUTPUT_CHANNELS: 3
-            DECODER_LR: 2.0e-4
-            NUM_FUSION_BLOCKS_TRAINABLE: 4
-            TRAIN_RGB_HEAD: True
-          highlight:
-            FEATURE_DIM: 1024
-            REASSEMBLE_OUT_CHANNELS: [96,192,384,768]
-            REASSEMBLE_FACTORS: [4.0, 2.0, 1.0, 0.5]
-            READOUT_TYPE: "ignore"
-            FROM_PRETRAINED: "highlight_decoder.pt"
-            USE_BN: False
-            DROPOUT: 0.1
-            OUTPUT_IMAGE_SIZE: [896,896]
-            OUTPUT_CHANNELS: 1
-            DECODER_LR: 0.0
-            NUM_FUSION_BLOCKS_TRAINABLE: null
-        TOKEN_INPAINTER:
-          TOKEN_INPAINTER_CLASS: "TokenInpainter_Prior"
-          TOKEN_INPAINTER_MODULE: "token_inpainters"
-          TOKEN_INPAINTER_LR: 1.0e-4
-          DEPTH: 6
-          HEADS: 16
-          DROP: 0.00
-          USE_POSITIONAL_ENCODING: True
-          USE_FINAL_NORM: True
-          USE_LOCAL_PRIOR: True
-          LOCAL_PRIOR_WEIGHT: 0.4
-          LOCAL_PRIOR_KERNEL: 5
-          SEED_NOISE_STD: 0.02
+  # ── SWEPT: the five parameters identified as regression causes ───────────────
 
   SURFACE_ROUGHNESS:
+    # Highlight breadth. GOOD runs: roughness ~8 (broad soft blobs). WORSE runs: [80,2000]
+    # (pinpoint specks → model only learns to erase tiny dots, fails on real broad highlights).
+    # Sampled log-uniformly in _resolve_highlight_param when given as a [min, max] range.
     values:
-      - [20.0, 200.0]   # narrow-broad: concentrates in the perceptually realistic range
-      - [20.0, 2000.0]  # full range: log-uniform from soft blobs to sharp specks
+      - [20.0, 200.0]    # concentrated in perceptually realistic range
+      - [20.0, 2000.0]   # full log-uniform range (includes sharp specks)
+
+  INTENSITY:
+    # Highlight strength. GOOD runs: 1.5–2.0. WORSE runs: [0.5,1.0] — too dim, the
+    # model sees weak gradients and doesn't learn to suppress bright highlights in output.
+    values:
+      - [0.5, 1.0]   # dim — end2end.yaml / WORSE recipe
+      - [1.0, 2.0]   # strong — GOOD-run range
 
   HIGHLIGHT_LOSS_WEIGHT:
+    # Supervises the highlight-mask head that feeds the token inpainter. WORSE runs
+    # (cerulean, unique-sponge) set this to 0 AND froze the head (DECODER_LR=0),
+    # giving ~15× worse HighlightRegression vs GOOD runs. Here MODEL fixes the head
+    # LR at 5e-4; this weight controls whether the mask-regression loss is active.
     values:
-      - 1.0   # supervised: highlight head receives mask-regression gradient
-      - 0.0   # frozen-loss: no mask supervision (end2end.yaml recipe)
+      - 1.0   # supervised (GOOD-run recipe)
+      - 0.0   # no mask loss (end2end.yaml recipe)
 
-  # ── FIXED PARAMETERS (same for all 8 runs) ──────────────────────────────────
+  WEIGHT_DIFFUSE_HIGHLIGHT_PENALTY:
+    # Direct penalty on residual bright pixels in the diffuse output. snowy-glade
+    # (best removal) used 1.0; end2end.yaml used 0.05 — 20× weaker, so the model
+    # was rarely penalised for leaving highlights behind.
+    # Sampled log-uniformly so low values (like 0.05) are as likely as high ones (2.0).
+    distribution: log_uniform_values
+    min: 0.05
+    max: 2.0
+
+  INPAINT_MASK_DILATION:
+    # Dilation of the highlight mask before feeding the token inpainter. Too small (9)
+    # leaves bright fringes at highlight edges; GOOD runs used 15–17 to cover the halo.
+    values:
+      - 9    # end2end.yaml — too tight
+      - 15   # optimal from analysis
+      - 21   # aggressive halo coverage
+
+  # ── FIXED: stable architecture (GOOD-run recipe) ─────────────────────────────
+  # Architecture is fixed at the GOOD-run stable recipe to isolate the effect of the
+  # five swept parameters above. Key stability knobs vs end2end.yaml:
+  #   DETACH=True (end2end: False → NaN-gradient coupling)
+  #   NUM_FUSION_BLOCKS_TRAINABLE=1 (end2end: 4 → overfit/instability)
+  #   DROPOUT=0.1 (end2end: 0.0)
+  #   highlight DECODER_LR=5e-4 (end2end: 0.0 → frozen head)
+
+  MODEL:
+    value:
+      MODEL_CLASS: "UnReflect_Model_TokenInpainter"
+      MODEL_MODULE: "models"
+      DETACH_INPAINTED_TOKENS_FOR_DECODER: True
+      RGB_ENCODER:
+        ENCODER: "facebook/dinov3-vitl16-pretrain-lvd1689m"
+        IMAGE_SIZE: 896
+        RETURN_SELECTED_LAYERS: [3, 6, 9, 12]
+        RGB_ENCODER_LR: 0.0
+      DECODERS:
+        diffuse:
+          FEATURE_DIM: 1024
+          REASSEMBLE_OUT_CHANNELS: [768,1024,1536,2048]
+          REASSEMBLE_FACTORS: [4.0, 2.0, 1.0, 0.5]
+          READOUT_TYPE: "ignore"
+          FROM_PRETRAINED: "diffuse_decoder.pt"
+          USE_BN: False
+          DROPOUT: 0.1
+          OUTPUT_IMAGE_SIZE: [896,896]
+          OUTPUT_CHANNELS: 3
+          DECODER_LR: 1.0e-4
+          NUM_FUSION_BLOCKS_TRAINABLE: 1
+          TRAIN_RGB_HEAD: True
+        highlight:
+          FEATURE_DIM: 1024
+          REASSEMBLE_OUT_CHANNELS: [96,192,384,768]
+          REASSEMBLE_FACTORS: [4.0, 2.0, 1.0, 0.5]
+          READOUT_TYPE: "ignore"
+          FROM_PRETRAINED: "highlight_decoder.pt"
+          USE_BN: False
+          DROPOUT: 0.1
+          OUTPUT_IMAGE_SIZE: [896,896]
+          OUTPUT_CHANNELS: 1
+          DECODER_LR: 5.0e-4
+          NUM_FUSION_BLOCKS_TRAINABLE: null
+      TOKEN_INPAINTER:
+        TOKEN_INPAINTER_CLASS: "TokenInpainter_Prior"
+        TOKEN_INPAINTER_MODULE: "token_inpainters"
+        TOKEN_INPAINTER_LR: 1.0e-4
+        DEPTH: 6
+        HEADS: 16
+        DROP: 0.05
+        USE_POSITIONAL_ENCODING: True
+        USE_FINAL_NORM: True
+        USE_LOCAL_PRIOR: True
+        LOCAL_PRIOR_WEIGHT: 0.4
+        LOCAL_PRIOR_KERNEL: 5
+        SEED_NOISE_STD: 0.02
 
   INPAINT_MASK_THRESHOLD:
     value: 0.3
-  INPAINT_MASK_DILATION:
-    value: 15
 
   INPAINT_FEED_RAW_MASK:
     value: False
@@ -216,11 +216,9 @@ parameters:
   PREFETCH_FACTOR:
     value: 2
 
-  ### HIGHLIGHTS (fixed — only roughness and loss weight are swept)
+  ### HIGHLIGHTS (fixed except SURFACE_ROUGHNESS and INTENSITY which are swept)
   MOGE_MODEL:
     value: "Ruicheng/moge-2-vits-normal"
-  INTENSITY:
-    value: [1.0, 2.0]
   LIGHT_DISTANCE_RANGE:
     value: [0.0, 1]
   LIGHT_LEFT_RIGHT_ANGLE:
@@ -313,9 +311,7 @@ parameters:
   TOKEN_FEAT_ALPHA:
     value: 0.5
 
-  ### DIFFUSE HIGHLIGHT PENALTY
-  WEIGHT_DIFFUSE_HIGHLIGHT_PENALTY:
-    value: 1.0
+  ### DIFFUSE HIGHLIGHT PENALTY (WEIGHT_DIFFUSE_HIGHLIGHT_PENALTY is swept above)
   DIFFUSE_HL_THRESHOLD:
     value: 0.85
   DIFFUSE_HL_USE_CHARB:
@@ -343,4 +339,4 @@ parameters:
   WANDB_PROJECT:
     value: "UnReflectAnything"
   NOTES:
-    value: "sweep: model-recipe × roughness-range × highlight-loss-weight"
+    value: "sweep: roughness × intensity × hl-loss × hl-penalty × mask-dilation"
