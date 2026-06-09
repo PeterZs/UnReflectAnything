@@ -792,6 +792,7 @@ class Engine:
                     light_pos=random_light_pos,
                     surface_roughness=self.config.SURFACE_ROUGHNESS,
                     intensity=self.config.INTENSITY,
+                    highlight_falloff=self.config.get("HIGHLIGHT_FALLOFF", 0.0),
                     return_dataset_highlights=True,
                     dataset_highlight_dilation=self.config.DATASET_HIGHLIGHT_DILATION,
                     dataset_highlight_threshold=self.config.DATASET_HIGHLIGHT_THRESHOLD,

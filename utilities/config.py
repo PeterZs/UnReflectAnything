@@ -240,11 +240,21 @@ def create_model_from_config(
             "local_prior_weight": token_inpainter_config.get("LOCAL_PRIOR_WEIGHT", 0.5),
             "local_prior_kernel": token_inpainter_config.get("LOCAL_PRIOR_KERNEL", 5),
             "seed_noise_std": token_inpainter_config.get("SEED_NOISE_STD", 0.01),
+            # Iterations of the diffusion local-prior fill (1 = legacy single
+            # box-filter prior). >1 propagates context into large-hole interiors.
+            # Sweepable via the top-level PRIOR_FILL_ITERS key.
+            "prior_fill_iters": token_inpainter_config.get(
+                "PRIOR_FILL_ITERS", config.get("PRIOR_FILL_ITERS", 1)
+            ),
         }
         model_kwargs["token_inpainter_cfg"] = token_inpainter_cfg
         model_kwargs["detach_inpainted_tokens_for_decoder"] = model_config.get(
             "DETACH_INPAINTED_TOKENS_FOR_DECODER", True
         )
+        # Sky suppression (top-level SKY_SUPPRESSION; optional SKY_PARAMS dict of
+        # detect_sky_mask kwargs). Default off → unchanged behaviour.
+        model_kwargs["suppress_sky"] = config.get("SKY_SUPPRESSION", False)
+        model_kwargs["sky_cfg"] = config.get("SKY_PARAMS", None)
 
     model = model_class(**model_kwargs).to(device)
     # torch.compile is incompatible with nn.DataParallel; skip when using DataParallel

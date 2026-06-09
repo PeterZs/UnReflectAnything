@@ -74,6 +74,77 @@ def feather_token_mask(pm_soft: torch.Tensor, radius_tokens: int = 1, smoothstep
     return out.clamp_(0, 1).view(B, N)
 
 
+@torch.no_grad()
+def detect_sky_mask(
+    rgb: torch.Tensor,
+    blue_excess: float = 0.02,
+    min_brightness: float = 0.45,
+    max_gradient: float = 0.06,
+    top_fraction: float = 0.6,
+    open_kernel: int = 9,
+    dilate_kernel: int = 0,
+    white_sky: bool = False,
+    white_brightness: float = 0.85,
+) -> torch.Tensor:
+    """
+    Very simple, dependency-free sky detector for RGB images in [0,1], (B,3,H,W).
+
+    Sky is told apart from specular highlights by three cues that highlights do
+    NOT share:
+      - blue-dominant colour (highlights are achromatic/white),
+      - low local gradient / smoothness (highlights are small & high-contrast),
+      - location in the upper part of the frame.
+    A morphological opening drops small bright specks so isolated highlights are
+    never picked up. The blueness gate keeps this from firing on red/indoor/
+    endoscopic scenes or on bright *white* synthetic training highlights, so it
+    is safe to run during training as well as inference. `white_sky` optionally
+    adds an overcast/white-sky branch (off by default; can clash with white
+    synthetic highlights during training).
+
+    Returns a float mask (B,1,H,W), 1 = sky.
+    """
+    B, C, Hh, Ww = rgb.shape
+    r, g, b = rgb[:, 0:1], rgb[:, 1:2], rgb[:, 2:3]
+    luma = 0.299 * r + 0.587 * g + 0.114 * b
+    blueness = b - torch.maximum(r, g)
+
+    # Sobel gradient magnitude of luma as a flatness cue.
+    kx = torch.tensor(
+        [[1, 0, -1], [2, 0, -2], [1, 0, -1]], device=rgb.device, dtype=rgb.dtype
+    ).view(1, 1, 3, 3) / 8.0
+    ky = torch.tensor(
+        [[1, 2, 1], [0, 0, 0], [-1, -2, -1]], device=rgb.device, dtype=rgb.dtype
+    ).view(1, 1, 3, 3) / 8.0
+    lp = F.pad(luma, (1, 1, 1, 1), mode="reflect")
+    gx = F.conv2d(lp, kx)
+    gy = F.conv2d(lp, ky)
+    grad = torch.sqrt(gx * gx + gy * gy + 1e-12)
+
+    flat = grad < max_gradient
+    blue = blueness > blue_excess
+    bright = luma > min_brightness
+    rows = torch.linspace(0, 1, Hh, device=rgb.device, dtype=rgb.dtype).view(
+        1, 1, Hh, 1
+    )
+    upper = rows < top_fraction
+
+    sky = flat & upper & blue & bright
+    if white_sky:
+        sky = sky | (flat & upper & (luma > white_brightness))
+    sky = sky.to(rgb.dtype)
+
+    # Morphological opening (erode then dilate) removes small flat-bright specks,
+    # keeping only large coherent sky regions.
+    if open_kernel and open_kernel > 1:
+        pad = open_kernel // 2
+        eroded = -F.max_pool2d(-sky, open_kernel, 1, pad)
+        sky = F.max_pool2d(eroded, open_kernel, 1, pad)
+    if dilate_kernel and dilate_kernel > 1:
+        pad = dilate_kernel // 2
+        sky = F.max_pool2d(sky, dilate_kernel, 1, pad)
+    return sky
+
+
 class DINOv3(nn.Module):
     """
     Configurable DINOv3 model with flexible return optionas.
@@ -1199,6 +1270,8 @@ class UnReflect_Model_TokenInpainter(UnReflect_Model):
         patch_size: int = 16,
         token_inpainter_cfg: dict | None = None,
         detach_inpainted_tokens_for_decoder: bool = True,
+        suppress_sky: bool = False,
+        sky_cfg: dict | None = None,
         **kwargs,
     ):
         super().__init__(
@@ -1207,6 +1280,12 @@ class UnReflect_Model_TokenInpainter(UnReflect_Model):
         self.detach_inpainted_tokens_for_decoder = bool(
             detach_inpainted_tokens_for_decoder
         )
+        # Sky suppression: drop detected sky from the inpaint mask so the token
+        # inpainter never repaints the sky (which the highlight head otherwise
+        # flags as a giant highlight). A per-forward `suppress_sky` in the input
+        # dict overrides this default. `sky_cfg` overrides detect_sky_mask kwargs.
+        self.suppress_sky = bool(suppress_sky)
+        self.sky_cfg = dict(sky_cfg) if sky_cfg else {}
         dim = self.embed_dim
         # Extract TokenInpainter class and module from config
         if token_inpainter_cfg is None:
@@ -1476,6 +1555,23 @@ class UnReflect_Model_TokenInpainter(UnReflect_Model):
             )
             > model_input_dict["inpaint_mask_threshold"]
         )
+
+        ### Sky suppression: never inpaint detected sky. Removes sky from the
+        # inpaint mask so the token inpainter leaves it untouched (the highlight
+        # head tends to flag bright sky as one large highlight).
+        suppress_sky = bool(
+            model_input_dict.get("suppress_sky", getattr(self, "suppress_sky", False))
+        )
+        if suppress_sky:
+            sky_cfg = model_input_dict.get("sky_cfg", getattr(self, "sky_cfg", {})) or {}
+            sky_mask = detect_sky_mask(x, **sky_cfg)  # (B,1,H,W) float, x in [0,1]
+            if sky_mask.shape[-2:] != pixel_inpaint_mask.shape[-2:]:
+                sky_mask = F.interpolate(
+                    sky_mask, size=pixel_inpaint_mask.shape[-2:], mode="nearest"
+                )
+            outputs["sky_mask"] = sky_mask
+            pixel_inpaint_mask = pixel_inpaint_mask & (sky_mask <= 0.5)
+
         outputs["highlight_mask"] = pixel_inpaint_mask.float()
         patch_inpaint_mask = pixel_mask_to_patch_mask(
             pixel_inpaint_mask,

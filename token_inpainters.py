@@ -248,6 +248,42 @@ def _local_mean_prior(T, patch_inpaint_mask, H, W, k=3):
     return mean
 
 
+def _iterative_mean_prior(T, patch_inpaint_mask, H, W, k=5, iters=1):
+    """
+    Diffusion-style fill of masked seeds: iteratively propagate the box-mean of
+    *known* neighbours into the hole, promoting freshly-filled positions to
+    "known" between iterations so context flows from the boundary toward the
+    interior.
+
+    With iters == 1 this is identical to _local_mean_prior (masked positions get
+    the mean of their visible neighbours, deep-interior positions get ~0). With
+    iters > 1 the boundary context diffuses inward, so deep-interior masked
+    tokens in *large* holes receive a meaningful, spatially-varying seed instead
+    of collapsing to a constant ~0 vector — which is what the decoder otherwise
+    renders as a flat gray patch with visible patch seams.
+
+    T: [B,N,C], patch_inpaint_mask: [B,N] (True = masked/hole). Returns [B,N,C].
+    """
+    B, N, C = T.shape
+    x = T.transpose(1, 2).reshape(B, C, H, W)  # B,C,H,W
+    mask = patch_inpaint_mask.reshape(B, 1, H, W).bool()  # True = hole
+    known = torch.logical_not(mask).to(T.dtype)  # 1 = visible/known
+    val = x * known  # zero out the holes; visible positions keep their tokens
+    pad = k // 2
+    kernel = torch.ones(1, 1, k, k, device=T.device, dtype=T.dtype)
+    eps = 1e-4
+    for _ in range(max(1, int(iters))):
+        # depthwise box-sum of currently-known values, normalized by known count
+        num = F.conv2d(val * known, kernel.expand(C, 1, k, k), padding=pad, groups=C)
+        den = F.conv2d(known, kernel, padding=pad)  # B,1,H,W
+        mean = num / den.clamp_min(eps).repeat(1, C, 1, 1)
+        reached = (den > eps) & mask  # holes that now touch ≥1 known neighbour
+        reached_c = reached.repeat(1, C, 1, 1)
+        val = torch.where(reached_c, mean, val)  # fill reachable holes
+        known = torch.where(reached, torch.ones_like(known), known)
+    return val.reshape(B, C, N).transpose(1, 2)  # B,N,C
+
+
 class TokenInpainter_Prior(nn.Module):
     """
     Completes masked patch tokens from context.
@@ -268,6 +304,7 @@ class TokenInpainter_Prior(nn.Module):
         local_prior_weight=0.5,
         seed_noise_std=0.01,
         local_prior_kernel=15,
+        prior_fill_iters=1,
     ):
         super().__init__()
         self.blocks = nn.ModuleList(
@@ -286,6 +323,9 @@ class TokenInpainter_Prior(nn.Module):
         self._seed_noise_std = seed_noise_std  # small train-time noise on masked seeds
         self._local_prior_weight = local_prior_weight
         self._prior_kernel = local_prior_kernel
+        # Number of diffusion iterations used to propagate the local-mean prior
+        # into the interior of large holes (1 == legacy single box-filter prior).
+        self._prior_fill_iters = int(prior_fill_iters)
 
     def forward(self, T: torch.Tensor, patch_inpaint_mask: torch.Tensor):
         # T: [B,N,C], patch_inpaint_mask: [B,N] (True = hole)
@@ -306,8 +346,9 @@ class TokenInpainter_Prior(nn.Module):
 
         # Blend the local mean prior on the masked positions (does not alter visible tokens)
         if self._use_local_prior:
-            mean_prior = _local_mean_prior(
-                T, patch_inpaint_mask, H, W, k=self._prior_kernel
+            mean_prior = _iterative_mean_prior(
+                T, patch_inpaint_mask, H, W, k=self._prior_kernel,
+                iters=self._prior_fill_iters,
             )
             T_seed = torch.where(
                 mask,

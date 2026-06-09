@@ -1,4 +1,24 @@
 ### WANDB SWEEP CONFIG ###
+# 8-RUN FACTORIAL over the three quality fixes, anchored on dulcet-sweep-2
+# (run mia2vsek) — its winning hyperparameters are the FIXED base; only the
+# three new capabilities below vary (2 x 2 x 2 grid = 8 runs):
+#
+#   PRIOR_FILL_ITERS   1   -> legacy single-box token prior (large-hole centers stay gray)
+#                      8   -> diffusion prior fills hole interiors  [Problem 1]
+#   HIGHLIGHT_FALLOFF  off -> soft Blinn-Phong lobes only
+#                      on  -> per-image hard/high-gradient highlights too  [Problem 2]
+#   SKY_SUPPRESSION    F   -> highlight head may inpaint sky
+#                      T   -> detected sky removed from inpaint mask  [Problem 3]
+#
+# Run table (grid expands the Cartesian product; tags for readability only):
+#   1 baseline (== dulcet-sweep-2)   iters=1  falloff=off  sky=F
+#   2 +sky                           iters=1  falloff=off  sky=T
+#   3 +falloff                       iters=1  falloff=on   sky=F
+#   4 +falloff+sky                   iters=1  falloff=on   sky=T
+#   5 +prior                         iters=8  falloff=off  sky=F
+#   6 +prior+sky                     iters=8  falloff=off  sky=T
+#   7 +prior+falloff                 iters=8  falloff=on   sky=F
+#   8 ALL                            iters=8  falloff=on   sky=T
 method: grid
 metric:
   goal: maximize
@@ -7,10 +27,10 @@ metric:
 
 program: sweep_agent.py
 
-project: UnReflectAnything  
+project: UnReflectAnything
 entity: unreflect-anything
 
-### BASELINE: CONVERGES AFTER LONG
+### BASELINE = dulcet-sweep-2 (mia2vsek) fixed hyperparameters
 
 parameters:
 
@@ -75,7 +95,7 @@ parameters:
   USE_TORCH_COMPILE:  # Enable PyTorch 2.0 torch.compile for faster training (experimental)
     value: False
   DISTRIBUTE:
-    value: "singlegpu "
+    value: "singlegpu"
 
   ### DATA                                                                      
   DATASETS:
@@ -220,7 +240,7 @@ parameters:
   SPECULAR_LOSS_WEIGHT:
     value: 0.0  # Weight for specular component reconstruction loss
   DIFFUSE_LOSS_WEIGHT:
-    values: [1,2.0]  # Detail recovery: was 1.0. Tilt the loss (and the inpainter's gradient direction, since DETACH=False) toward pixel-space diffuse reconstruction.
+    value: 1  # dulcet-sweep-2 winner (was swept [1,2.0]; 1 won). Pixel-space diffuse reconstruction weight.
   HIGHLIGHT_LOSS_WEIGHT:
     value: 0.0  # Weight for highlight mask regression loss
   TOKEN_INPAINT_LOSS_WEIGHT:
@@ -256,7 +276,7 @@ parameters:
   SEAM_WEIGHT_GRAD:
     value: 0.5  # Detail recovery: was 0.0. Match image GRADIENTS across the seam — the only config-available high-frequency term acting on the diffuse output.
   TOKEN_FEAT_ALPHA:
-    values: [0.25,0.5,0.75]  # Mixing factor for token feature loss: alpha * L1 + (1-alpha) * (1-cosine_sim)
+    value: 0.5  # dulcet-sweep-2 winner (was swept [0.25,0.5,0.75]; 0.5 won). alpha*L1 + (1-alpha)*(1-cosine_sim).
 
   ### DIFFUSE HIGHLIGHT PENALTY
   WEIGHT_DIFFUSE_HIGHLIGHT_PENALTY:
@@ -289,3 +309,29 @@ parameters:
     value: "UnReflectAnything"  # WandB project name
   NOTES:
     value: ""  # Notes/description for this training run
+
+  ### ================= SWEEP AXES (the only varying parameters) =================
+  # 2 x 2 x 2 grid = 8 runs. Everything above is fixed at dulcet-sweep-2 values.
+
+  # [Problem 1] Large highlights: diffusion iterations that propagate the token
+  # local-mean prior into the interior of large holes. 1 = legacy single box
+  # filter (interior seeds collapse to ~0 -> flat gray patch). 8 = boundary
+  # context diffuses inward (kernel=5 reaches ~16-token radius), giving deep
+  # masked tokens a content-aware seed instead of gray. Read by create_model_from_config.
+  PRIOR_FILL_ITERS:
+    values: [1, 8]
+
+  # [Problem 2] Sharp highlights: edge-hardness / falloff applied to the
+  # per-image-normalized synthetic highlight, sampled uniformly per image in
+  # [min,max]. [0.0,0.0] = soft Blinn-Phong lobes only (legacy). [0.0,0.6] =
+  # also synthesize small, hard-edged, high-gradient highlights (crops the soft
+  # halo and rescales), so the model learns to remove the type it currently leaves visible.
+  HIGHLIGHT_FALLOFF:
+    values: [[0.0, 0.0], [0.0, 0.6]]
+
+  # [Problem 3] Sky: when true, a conservative blue/flat/upper-region sky mask is
+  # removed from the inpaint mask in the model forward, so the token inpainter
+  # never repaints the sky. Deterministic (no extra params trained); safe on red/
+  # indoor/endoscopic scenes (blueness-gated). Read by create_model_from_config.
+  SKY_SUPPRESSION:
+    values: [false, true]
