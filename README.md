@@ -5,12 +5,12 @@
 [![Paper](https://img.shields.io/badge/Paper-arXiv-B31B1B?logo=arxiv&logoColor=B31B1B)](https://arxiv.org/abs/2512.09583)
 [![Demo](https://img.shields.io/badge/Demo-HF%20-FFD21E?logo=huggingface&logoColor=FFD21E)](https://huggingface.co/spaces/AlbeRota/UnReflectAnything)
 [![Modelcard](https://img.shields.io/badge/Model%20Card-HF%20-FFD21E?logo=huggingface&logoColor=FFD21E)](https://huggingface.co/AlbeRota/UnReflectAnything)
+[![Oral](https://img.shields.io/badge/Oral-Recording%20-ff0033?logo=youtube&logoColor=ff0033)](https://youtu.be/Uuy9arZwWaM?t=3655)
 [![Wiki](https://img.shields.io/badge/API-Wiki-9187FF?logo=wikipedia&logoColor=9187FF)](https://github.com/alberto-rota/UnReflectAnything/wiki)
 [![Colab](https://img.shields.io/badge/Examples-Colab-F9AB00?logo=googlecolab&logoColor=F9AB00)](https://colab.research.google.com/#fileId=https%3A//huggingface.co/AlbeRota/UnReflectAnything/blob/main/notebooks/UnReflectAnything.ipynb)
 [![Licence](https://img.shields.io/badge/MIT-License-1E811F)](https://mit-license.org/)
 ### RGB-Only Highlight Removal by Rendering Synthetic Specular Supervision
 UnReflectAnything inputs any RGB image and removes specular highlights, returning a clean diffuse-only output. We trained UnReflectAnything by synthetizing specularities and supervising in DINOv3 feature space.
-
 
 UnReflectAnything works on both natural indoor and surgical/endoscopic domain data. 
 
