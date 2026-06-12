@@ -48,7 +48,9 @@ def _resolve_highlight_param(
 
 
 def apply_highlight_falloff(
-    H: torch.Tensor, falloff: Union[float, torch.Tensor]
+    H: torch.Tensor,
+    falloff: Union[float, torch.Tensor],
+    concentration: Union[float, torch.Tensor] = 0.0,
 ) -> torch.Tensor:
     """
     Steepen the highlight edge and shrink the soft halo to synthesize
@@ -61,15 +63,36 @@ def apply_highlight_falloff(
     intensity gradient at its boundary. falloff == 0 leaves H unchanged (soft
     lobe). `falloff` may be a scalar or a per-sample tensor [B].
 
+    `concentration` >= 0 brightens / saturates the pixels that survive the
+    falloff crop by applying a gamma = 1/(1+concentration) power curve to the
+    rescaled band, pushing the surviving values up toward 1 (so the kept
+    highlight reads as a "more concentrated", brighter core). concentration == 0
+    is a no-op (linear rescale, the previous behaviour). `concentration` may be a
+    scalar or a per-sample tensor [B].
+
     H: [B,1,H,W] in [0,1]. Returns [B,1,H,W] in [0,1].
     """
+
+    def _apply_concentration(t: torch.Tensor) -> torch.Tensor:
+        # t: [B,1,H,W] rescaled band in [0,1]. gamma<1 brightens the survivors.
+        if torch.is_tensor(concentration):
+            c = concentration.view(-1, 1, 1, 1).to(t.dtype).clamp_min(0.0)  # [B,1,1,1]
+            gamma = 1.0 / (1.0 + c)  # [B,1,1,1]
+            return t.clamp_min(0.0).pow(gamma)
+        if concentration is None or concentration <= 0.0:
+            return t
+        gamma = 1.0 / (1.0 + float(concentration))
+        return t.clamp_min(0.0).pow(gamma)
+
     if not torch.is_tensor(falloff):
         if falloff is None or falloff <= 0.0:
-            return H
+            return _apply_concentration(H)
         f = float(falloff)
-        return ((H - f) / max(1.0 - f, 1e-6)).clamp(0.0, 1.0)
-    f = falloff.view(-1, 1, 1, 1).to(H.dtype)
-    return ((H - f) / (1.0 - f).clamp_min(1e-6)).clamp(0.0, 1.0)
+        t = ((H - f) / max(1.0 - f, 1e-6)).clamp(0.0, 1.0)  # [B,1,H,W]
+        return _apply_concentration(t)
+    f = falloff.view(-1, 1, 1, 1).to(H.dtype)  # [B,1,1,1]
+    t = ((H - f) / (1.0 - f).clamp_min(1e-6)).clamp(0.0, 1.0)  # [B,1,H,W]
+    return _apply_concentration(t)
 
 
 @torch.no_grad()
@@ -877,6 +900,7 @@ class HighlightRender(nn.Module):
         intensity=1.0,
         clamp_H=True,
         falloff=0.0,
+        concentration=0.0,
     ):
         """
         Synthesize specular highlights and build the corresponding Stokes vector.
@@ -935,7 +959,8 @@ class HighlightRender(nn.Module):
 
         # 3b) Optionally steepen the falloff to synthesize hard-edged,
         # high-gradient highlights (operates on the normalized lobe in [0,1]).
-        H = apply_highlight_falloff(H, falloff)
+        # `concentration` additionally brightens the surviving core.
+        H = apply_highlight_falloff(H, falloff, concentration)
 
         # 4) Compute polarization parameters from Fresnel theory
         H_dop, H_aop = self.compute_polarization_parameters(v, l, nl, self.n_rel)
@@ -956,6 +981,7 @@ class HighlightRender(nn.Module):
         surface_roughness=80.0,
         intensity=10.0,
         highlight_falloff=0.0,
+        highlight_concentration=0.0,
         # Geometric roughness parameters
         n_blobs=0,
         avg_blob_size=0.10,
@@ -988,6 +1014,10 @@ class HighlightRender(nn.Module):
             intrinsic: [B,3,3] intrinsics or "compute" to use MoGe intrinsics
             surface_roughness: Base Blinn-Phong exponent α (float or [min, max]; if range, sampled log-uniform per sample)
             intensity: Specular strength multiplier (float or [min, max]; if range, sampled uniform per sample)
+            highlight_falloff: Edge-hardness crop in [0,1) (float or [min,max]; uniform per sample). 0 = soft lobe.
+            highlight_concentration: Brightness boost (>=0) of the pixels that survive the falloff crop
+                                     (float or [min,max]; uniform per sample). Applies a gamma=1/(1+c) curve
+                                     to the rescaled band, pushing survivors toward 1. 0 = no boost.
             # Geometric roughness parameters
             n_blobs: number of blobs
             avg_blob_size: avg diameter (fraction of min(H,W) or pixels)
@@ -1048,6 +1078,11 @@ class HighlightRender(nn.Module):
         falloff = _resolve_highlight_param(
             highlight_falloff, B, device, log_uniform=False
         )
+        # Concentration / brightness boost of the surviving core: scalar or
+        # [min,max] (uniform per-sample). 0 = linear rescale (no boost).
+        concentration = _resolve_highlight_param(
+            highlight_concentration, B, device, log_uniform=False
+        )
 
         # If intensity is scalar zero, skip all highlight and geometry computations (tensor => never skip)
         if not torch.is_tensor(intensity) and intensity == 0:
@@ -1080,6 +1115,7 @@ class HighlightRender(nn.Module):
                 "surface_roughness": surface_roughness,
                 "intensity": intensity,
                 "highlight_falloff": falloff,
+                "highlight_concentration": concentration,
             }
             if (
                 return_dataset_highlights
@@ -1143,6 +1179,7 @@ class HighlightRender(nn.Module):
                 surface_roughness=surface_roughness,
                 intensity=intensity,
                 falloff=falloff,
+                concentration=concentration,
             )
         )
 
@@ -1165,6 +1202,7 @@ class HighlightRender(nn.Module):
             "surface_roughness": surface_roughness,
             "intensity": intensity,
             "highlight_falloff": falloff,
+            "highlight_concentration": concentration,
         }
 
         # Dataset Highlights are thresholded here
