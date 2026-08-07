@@ -779,7 +779,85 @@ class Engine:
                     for param_group in self.optimizer.param_groups:
                         param_group["lr"] = current_lr
 
-                ### Add polarization highlights
+                ### Add synthetic highlights (Blinn-Phong on MoGe normals).
+                # During Validation/Test we FREEZE the highlight distribution so the
+                # eval metric is comparable across runs and epochs. The swept training
+                # params (HIGHLIGHT_FALLOFF / HIGHLIGHT_DENSITY, and any range-valued
+                # SURFACE_ROUGHNESS / INTENSITY) must NOT leak into eval-time difficulty
+                # -- otherwise a run trained on harder highlights is graded on a harder
+                # eval set and looks worse for the wrong reason. We pin the eval params
+                # to fixed values and seed the RNG per batch so identical highlights are
+                # drawn every epoch and in every sweep run, then restore RNG afterwards.
+                freeze_val_hl = (not is_training) and bool(
+                    self.config.get("FREEZE_VAL_HIGHLIGHTS", False)
+                )
+                if freeze_val_hl:
+                    hl_falloff = self.config.get("VAL_HIGHLIGHT_FALLOFF", 0.0)
+                    hl_density = self.config.get("VAL_HIGHLIGHT_DENSITY", 0.0)
+                    hl_roughness = self.config.get(
+                        "VAL_SURFACE_ROUGHNESS", self.config.SURFACE_ROUGHNESS
+                    )
+                    hl_intensity = self.config.get("VAL_INTENSITY", self.config.INTENSITY)
+                    _val_seed = int(self.config.get("VAL_HIGHLIGHT_SEED", 1234)) + batch_idx
+                    _cpu_rng_state = torch.get_rng_state()
+                    _cuda_rng_state = (
+                        torch.cuda.get_rng_state_all()
+                        if torch.cuda.is_available()
+                        else None
+                    )
+                    torch.manual_seed(_val_seed)
+                    if torch.cuda.is_available():
+                        torch.cuda.manual_seed_all(_val_seed)
+                else:
+                    hl_falloff = self.config.get("HIGHLIGHT_FALLOFF", 0.0)
+                    hl_density = self.config.get("HIGHLIGHT_DENSITY", 1.0)
+                    hl_roughness = self.config.SURFACE_ROUGHNESS
+                    hl_intensity = self.config.INTENSITY
+
+                # Small, sharp, high-gradient specular blobs (normal perturbation via
+                # add_geometric_roughness_torch). This synthesizes the "concentrated
+                # pure-white blob with no smooth falloff" morphology that smooth
+                # scene-wide Blinn-Phong lobes never produce. Disabled by default
+                # (N_BLOBS=0 -> function not called, legacy behavior). Applied ONLY to
+                # training: the blob RNG is not torch-seedable, so injecting it into a
+                # frozen/seeded eval would break cross-run comparability.
+                _geo = self.config.get("GEOMETRIC_HIGHLIGHTS", {}) or {}
+                if freeze_val_hl or int(_geo.get("N_BLOBS", 0)) <= 0:
+                    geo_kwargs = {}
+                else:
+                    geo_kwargs = dict(
+                        n_blobs=int(_geo.get("N_BLOBS", 0)),
+                        avg_blob_size=float(_geo.get("AVG_BLOB_SIZE", 0.05)),
+                        size_unit=str(_geo.get("SIZE_UNIT", "fraction")),
+                        size_spread=float(_geo.get("SIZE_SPREAD", 0.8)),
+                        elongation_bias=float(_geo.get("ELONGATION_BIAS", 0.6)),
+                        roughness_strength=float(_geo.get("ROUGHNESS_STRENGTH", 1.5)),
+                    )
+
+                # Large contiguous saturated highlights (make_large_highlight_mask):
+                # composite a big irregular plateau into H so the token inpainter is
+                # trained on LARGE holes whose interior has no local context (the
+                # gray-center failure case). Unlike GEOMETRIC_HIGHLIGHTS these draw
+                # from the global torch RNG, so they ARE reproducible under frozen
+                # eval — VAL_LARGE_HIGHLIGHTS lets a frozen sweep grade large-hole
+                # removal instead of being blind to it. PROB=0 (default) disables.
+                if freeze_val_hl:
+                    _lhl = self.config.get("VAL_LARGE_HIGHLIGHTS", {}) or {}
+                else:
+                    _lhl = self.config.get("LARGE_HIGHLIGHTS", {}) or {}
+                if float(_lhl.get("PROB", 0.0)) > 0.0:
+                    lhl_kwargs = dict(
+                        large_highlight_prob=float(_lhl.get("PROB", 0.0)),
+                        large_highlight_count=int(_lhl.get("COUNT", 1)),
+                        large_highlight_size=_lhl.get("SIZE", [0.12, 0.38]),
+                        large_highlight_elongation=float(_lhl.get("ELONGATION", 0.5)),
+                        large_highlight_core_frac=float(_lhl.get("CORE_FRAC", 0.22)),
+                        large_highlight_peak=_lhl.get("PEAK", [0.9, 1.5]),
+                        large_highlight_edge_wobble=float(_lhl.get("EDGE_WOBBLE", 0.25)),
+                    )
+                else:
+                    lhl_kwargs = {}
+
                 random_light_pos = self.add_highlights.sample_light_source(
                     dist_to_camera=self.config.LIGHT_DISTANCE_RANGE,
                     left_right_angle=self.config.LIGHT_LEFT_RIGHT_ANGLE,
@@ -790,9 +868,12 @@ class Engine:
                 highlight_result = self.add_highlights(
                     rgb=sample["diffuse"].to(self.device, non_blocking=True),
                     light_pos=random_light_pos,
-                    surface_roughness=self.config.SURFACE_ROUGHNESS,
-                    intensity=self.config.INTENSITY,
-                    highlight_falloff=self.config.get("HIGHLIGHT_FALLOFF", 0.0),
+                    surface_roughness=hl_roughness,
+                    intensity=hl_intensity,
+                    highlight_falloff=hl_falloff,
+                    highlight_density=hl_density,
+                    **geo_kwargs,
+                    **lhl_kwargs,
                     return_dataset_highlights=True,
                     dataset_highlight_dilation=self.config.DATASET_HIGHLIGHT_DILATION,
                     dataset_highlight_threshold=self.config.DATASET_HIGHLIGHT_THRESHOLD,
@@ -800,6 +881,11 @@ class Engine:
                         self.config.get("DATASET_HIGHLIGHT_USE_LUMINANCE", True)
                     ),
                 )
+                # Restore RNG so frozen-eval seeding never perturbs the training stream.
+                if freeze_val_hl:
+                    torch.set_rng_state(_cpu_rng_state)
+                    if _cuda_rng_state is not None:
+                        torch.cuda.set_rng_state_all(_cuda_rng_state)
 
                 dataset_highlights_soft_mask = highlight_result[
                     "dataset_highlights_soft_mask"

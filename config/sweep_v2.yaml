@@ -1,24 +1,60 @@
-### EXPERIMENT: SHARP / SATURATED HIGHLIGHT REMOVAL
-### Hypothesis: the model fails on small, concentrated, fully-clipped (255/255/255)
-### specular blobs because the synthetic supervision never contained that
-### morphology — only smooth, scene-wide Blinn-Phong lobes that rarely saturate.
-### This run enables the previously-dormant micro-specular blob generator and
-### pushes the compositing into true saturation. Four coupled changes vs the
-### prior end2end baseline (all in the HIGHLIGHTS section below):
-###   1. GEOMETRIC_HIGHLIGHTS.N_BLOBS 0 -> 24   (perturb normals -> small sharp blobs)
-###   2. INTENSITY        [0.8,1.0] -> [0.8,2.5] (drive a broad core past the a=1 clamp)
-###   3. HIGHLIGHT_FALLOFF  [0,0]   -> [0.0,0.5] (hard, high-gradient edges)
-###   4. HIGHLIGHT_DENSITY  (1.0)   -> [0.0,2.0] (broaden/saturate the surviving core)
-### EVAL: FREEZE_VAL_HIGHLIGHTS is intentionally UNSET, so validation mirrors the
-### (now hard) training distribution and the val metric actually reflects this
-### failure case. Judge primarily on the logged qualitative panels; the scalar
-### in-mask SSIM is not comparable to prior soft-lobe-eval runs (see notes in
-### geometric-roughness analysis). To ablate the 4 axes independently, use the
-### sweep harness rather than this single-run config.
+### WANDB SWEEP CONFIG v2 — TARGETED REDESIGN ###
+# 8-RUN FACTORIAL anchored on dulcet-sweep-2 (run mia2vsek). Rather than re-test
+# PRIOR_FILL_ITERS (the one axis the first sweep, knd3slij, already measured
+# fairly — 8 beat 1 in every eval-invariant comparison), this sweep LOCKS the
+# things we're confident about and spends the budget on the loss knobs that map
+# directly to the residual qualitative failures, which have NEVER been searched.
+#
+# LOCKED (fixed for all 8 runs):
+#   SKY_SUPPRESSION = on          (product decision)
+#   PRIOR_FILL_ITERS = 8          (eval-invariant winner from knd3slij)
+#   FREEZE_VAL_HIGHLIGHTS = on    (frozen+seeded eval so every run is graded on
+#                                  the identical task -> metric is comparable)
+#   HIGHLIGHT_DENSITY = 0.0       (neutral Blinn-Phong rescale; the density axis
+#                                  is already being measured by the live knd3slij
+#                                  sweep, so we hold it neutral here to avoid
+#                                  confounding the falloff axis below)
+#
+# SWEPT (2 x 2 x 2 = 8 runs):
+#   HIGHLIGHT_FALLOFF             off=[0,0]  on=[0,0.6]   [Problem 2: sharp highlights]
+#       The render lever — finally measured fairly (was confounded in knd3slij).
+#   WEIGHT_DIFFUSE_HIGHLIGHT_PENALTY  0.05 -> 0.15        [Problem 2: residue]
+#       Directly suppresses residual brightness left in the diffuse output, i.e.
+#       the "highlights still subtly visible" complaint. Higher risks darkening
+#       red CHOLEC scenes — that trade-off is exactly what we want to observe.
+#   WEIGHT_SEAM                  0.1 -> 0.3               [Problem 1: patch artefacts]
+#       Enforces pixel+gradient consistency on the ring around removed highlights;
+#       the lever for the "evident patch artefacts" at large-hole boundaries.
+#
+# Run table (grid expands the Cartesian product; tags for readability only):
+#   1 baseline             falloff=off  penalty=0.05  seam=0.1
+#   2 +seam                falloff=off  penalty=0.05  seam=0.3
+#   3 +penalty             falloff=off  penalty=0.15  seam=0.1
+#   4 +penalty+seam        falloff=off  penalty=0.15  seam=0.3
+#   5 +falloff             falloff=on   penalty=0.05  seam=0.1
+#   6 +falloff+seam        falloff=on   penalty=0.05  seam=0.3
+#   7 +falloff+penalty     falloff=on   penalty=0.15  seam=0.1
+#   8 ALL                  falloff=on   penalty=0.15  seam=0.3
+#
+# NOTE: sky is fixed on and barely moves the in-mask SSIM metric (most val frames
+# are indoor/medical). Judge sky suppression QUALITATIVELY on the logged
+# OpenImages/outdoor panels, not on this scalar.
+
+method: grid
+metric:
+  goal: maximize
+  name: Validation/epoch/SSIM/diffuse_inmask
+
+
+program: sweep_agent.py
+
+project: UnReflectAnything
+entity: unreflect-anything
+
 
 parameters:
 
-  ### MODEL ARCHITECTURE                                                       
+  ### MODEL ARCHITECTURE
   MODEL:
     value:
       MODEL_CLASS: "UnReflect_Model_TokenInpainter"  # Main model class name (must match class in models.py)
@@ -48,7 +84,7 @@ parameters:
           REASSEMBLE_OUT_CHANNELS: [96,192,384,768]  # Output channels for each decoder stage
           REASSEMBLE_FACTORS: [4.0, 2.0, 1.0, 0.5]  # Spatial upsampling factors for each stage
           READOUT_TYPE: "ignore"  # Readout type for DPT decoder
-          FROM_PRETRAINED: "highlight_decoder.pt"  # Path to pretrained decoder weights (optional)  
+          FROM_PRETRAINED: "highlight_decoder.pt"  # Path to pretrained decoder weights (optional)
           USE_BN: False  # Use batch normalization in decoder
           DROPOUT: 0.1  # Dropout rate in decoder layers
           OUTPUT_IMAGE_SIZE: [896,896]  # Output image resolution [height, width]
@@ -62,16 +98,16 @@ parameters:
         TOKEN_INPAINTER_LR: 1.0e-4  # Lowered from 5e-4: inpainter color already converged (~1.1e-4 at crash); keep it gentle on resume so the detail push doesn't disturb the good color.
         DEPTH: 6  # Number of transformer blocks
         HEADS: 16 # Number of attention heads
-        DROP: 0.00 # Dropout rate 
+        DROP: 0.00 # Dropout rate
         USE_POSITIONAL_ENCODING: True  # Enable 2D sinusoi  dal positional encodings
         USE_FINAL_NORM: True  # Enable final LayerNorm before output projection
         USE_LOCAL_PRIOR: True  # Blend local mean prior for masked seeds
         LOCAL_PRIOR_WEIGHT: 0.4
         LOCAL_PRIOR_KERNEL: 5  # Kernel size for local prior blending (> 1)
-        SEED_NOISE_STD: 0.02  # Standard deviation of noise added to masked seeds during training  
+        SEED_NOISE_STD: 0.02  # Standard deviation of noise added to masked seeds during training
 
   # FORWARD PASS PARAMETERS
-  INPAINT_MASK_THRESHOLD: 
+  INPAINT_MASK_THRESHOLD:
     value: 0.2  # Threshold for inpaint mask
   INPAINT_MASK_DILATION:
     value: 9 # Dilation kernel size (pixels) for inpaint mask - Must be odd
@@ -79,9 +115,9 @@ parameters:
   USE_TORCH_COMPILE:  # Enable PyTorch 2.0 torch.compile for faster training (experimental)
     value: False
   DISTRIBUTE:
-    value: "ddp"
+    value: "singlegpu"
 
-  ### DATA                                                                      
+  ### DATA
   DATASETS:
     value:
       # Reserved key: key-value pairs here override the same keys for every dataset (per-dataset entries still override this).
@@ -89,7 +125,7 @@ parameters:
         VAL_SCENES: ["scene10", "scene04"]  # List of validation scene names
         RESIZE_MODE: "resize+crop"  # Image resizing mode: "resize", "crop", "resize+crop", or "pad"
         SAMPLE_EVERY_N: 6  # Load every Nth frame from each scene (1 = all frames, 4 = every 4th frame)
-        
+
       HOUSECAT6D:
         VAL_SCENES: ["val_scene1","val_scene2"]  # Validation scene names
         RESIZE_MODE: "resize+crop"  # Image resizing mode
@@ -100,7 +136,7 @@ parameters:
         VAL_SCENES: ["station"]  # Validation scene names (optional)
         RESIZE_MODE: "resize"  # Image resizing mode
         SAMPLE_EVERY_N: 30  # Load every Nth frame
-    
+
       PSD:
         TRAIN_SCENES: "PSD_Train"  # Training scene name (string or list)
         VAL_SCENES: "PSD_Val"  # Validation scene name (string or list)
@@ -111,7 +147,7 @@ parameters:
         VAL_SCENES: ["v22","v23","v24","v25","v26","v27","v28","v29","v30","v31","v32","v33","v34"]  # Validation scene names
         RESIZE_MODE: "resize+crop"  # Image resizing mode
         SAMPLE_EVERY_N: 8  # Load every Nth frame
-              
+
       STEREOMIS_TRACKING:
         VAL_SCENES: ["P2_2"]  # Validation scene names
         RESIZE_MODE: "resize+crop"  # Image resizing mode
@@ -139,7 +175,7 @@ parameters:
         # VAL_SCENES: [""]
         RESIZE_MODE: "resize+crop"
         SAMPLE_EVERY_N: 5
-      
+
       ENDOSYNTH:
         TRAIN_SCENES: ["scene"]
         # VAL_SCENES: ["val"]
@@ -149,7 +185,7 @@ parameters:
       ALL_DATASETS:
         FEW_IMAGES: False   # Override FEW_IMAGES for all datasets (for quick debugging set True)
         TARGET_SIZE: [896,896]  # Override target image size [height, width] for all datasets
-        LOAD_RGB_ONLY: True        
+        LOAD_RGB_ONLY: True
 
   BATCH_SIZE: # Max batch size with img size 896 is 32
     value: 6    # Number of samples per batch (adjust based on GPU memory)
@@ -161,14 +197,14 @@ parameters:
     value: True  # Pin memory in DataLoader for faster GPU transfer (recommended: True)
   PREFETCH_FACTOR:
     value: 2  # Number of batches to prefetch per worker (higher = more memory usage)
-  
-  ### HIGHLIGHTS                                                        
+
+  ### HIGHLIGHTS
   MOGE_MODEL:
     value: "Ruicheng/moge-2-vits-normal"  # MoGe model name for normal estimation (HuggingFace format)
   SURFACE_ROUGHNESS:
-    value: [60.0, 2000.0]  # Blinn-Phong surface roughness exponent — sampled log-uniformly in this range (higher = sharper highlights)
+    value: [20.0, 2000.0]  # Blinn-Phong surface roughness exponent — sampled log-uniformly in this range (higher = sharper highlights)
   INTENSITY:
-    value: [0.8, 2.5]  # Raised ceiling >1 (was [0.8,1.0]). H is per-image-normalized to peak 1.0, so intensity>1 drives a BROAD region past the alpha=1 clamp -> genuine 255/255/255 saturated plateaus (the "pure-white blob" failure case) instead of a single bright lobe peak.
+    value: [0.5, 1.2]  # Specular highlight intensity multiplier
   LIGHT_DISTANCE_RANGE:
     value: [0.0, 1]  # Range for light source distance sampling [min, max] (normalized)
   LIGHT_LEFT_RIGHT_ANGLE:
@@ -183,32 +219,38 @@ parameters:
     value: True  # If True, use perceptually-weighted luminance (0.299*R + 0.587*G + 0.114*B) for dataset highlights; if False, use simple mean brightness
   HIGHLIGHT_COLOR:
     value: [1.0, 1.0, 1.0]  # RGB color for synthetic highlights (normalized 0-1)
-  HIGHLIGHT_FALLOFF:
-    value: [0.0, 0.5]  # Re-enabled (was [0,0]). Crops the soft Blinn-Phong halo and rescales the survivors -> hard-edged, high-gradient highlights. NOTE: the prior sweep kr6z56k5 found [0,0.6] "lost" — but that sweep was graded with FREEZE_VAL_HIGHLIGHTS + VAL_HIGHLIGHT_FALLOFF=0.0, i.e. a SOFT-lobe-only eval that is structurally blind to hard-highlight removal. That result does not measure this failure case; see the eval caveat below.
-  HIGHLIGHT_DENSITY:
-    value: [0.0, 2.0]  # Concentration (gamma = 1/(1+c)) brightens/saturates the pixels surviving the falloff crop, broadening the pure-white core. Pairs with INTENSITY/FALLOFF to make small, sharp, fully-clipped blobs.
   CLAMP_RECONSTRUCTION:
     value: True  # Clamp reconstructed images to [0, 1] range if True
 
-  ### GEOMETRIC (MICRO-SPECULAR) HIGHLIGHTS
-  # Perturbs MoGe normals inside many small blobs (add_geometric_roughness_torch)
-  # so the Blinn-Phong pass produces small, sharp, concentrated specular blobs —
-  # the exact morphology smooth scene-wide lobes never create and the model
-  # currently fails to inpaint. N_BLOBS=0 disables it (legacy behavior).
-  # Training-only (blob RNG isn't torch-seedable, so it's kept out of frozen eval).
-  GEOMETRIC_HIGHLIGHTS:
-    value:
-      N_BLOBS: 24            # number of micro-specular blobs per image (0 = off)
-      AVG_BLOB_SIZE: 0.04    # mean blob diameter as a fraction of min(H,W) -> small
-      SIZE_UNIT: "fraction"  # "fraction" of image, or "pixels"
-      SIZE_SPREAD: 0.9       # lognormal spread; >0 => mix of many small + a few larger
-      ELONGATION_BIAS: 0.6   # 0=circular, 1=very elongated on average
-      ROUGHNESS_STRENGTH: 1.5  # average normal angular deviation (radians) inside blobs
+  # Brightness boost (gamma = 1/(1+c)) of the highlight pixels surviving the
+  # falloff crop. HELD NEUTRAL here (0 = linear rescale, no boost): the density
+  # axis is being measured by the live knd3slij sweep, so we keep it fixed to
+  # avoid confounding the HIGHLIGHT_FALLOFF axis swept below.
+  HIGHLIGHT_DENSITY:
+    value: 0.0
 
-  ### OPTIMIZATION                                                                      
+  ### FROZEN VALIDATION HIGHLIGHTS (makes the sweep metric comparable) ###
+  # When FREEZE_VAL_HIGHLIGHTS is true, engine.py ignores the swept training
+  # HIGHLIGHT_FALLOFF / HIGHLIGHT_DENSITY (and any range SURFACE_ROUGHNESS /
+  # INTENSITY) during Validation and Test, and instead renders ONE fixed, seeded
+  # highlight distribution below. This guarantees all sweep runs are scored on
+  # the IDENTICAL task, and removes per-epoch eval noise (best-checkpoint
+  # selection becomes reliable). VAL_SURFACE_ROUGHNESS / VAL_INTENSITY are unset,
+  # so they fall back to the (constant, non-swept) training ranges above; the
+  # per-batch seed makes even those range samples reproducible across runs.
+  FREEZE_VAL_HIGHLIGHTS:
+    value: true   # Freeze + seed the val/test highlight distribution for cross-run comparability
+  VAL_HIGHLIGHT_FALLOFF:
+    value: 0.0    # Canonical soft Blinn-Phong lobe at eval (do NOT swing this with the training axis)
+  VAL_HIGHLIGHT_DENSITY:
+    value: 0.0    # Canonical core brightness (0 = linear rescale, no boost)
+  VAL_HIGHLIGHT_SEED:
+    value: 1234   # Base RNG seed; the actual per-batch seed is VAL_HIGHLIGHT_SEED + batch_idx
+
+  ### OPTIMIZATION
   LEARNING_RATE:
     value: 1.0e-3  # Base learning rate for optimizer   # DEPRECATED. SETTING LR FOR EACH MODULE ABOVE
-  WEIGHT_DECAY:   
+  WEIGHT_DECAY:
     value: 0.0 # L2 regularization weight (0.0 = no weight decay)
   EPOCHS:
     value: 50  # Maximum number of training epochs
@@ -218,8 +260,8 @@ parameters:
     value: 400  # Number of warmup steps for learning rate schedule (linear warmup from 0 to LR)
   GRADIENT_CLIPPING_MAX_NORM:
     value: 8  # Maximum gradient norm for clipping (set to -1 to disable clipping)
-  LR_SCHEDULER: 
-    value: 
+  LR_SCHEDULER:
+    value:
       ONPLATEAU:  # ReduceLROnPlateau scheduler (reduces LR when validation metric plateaus)
         PATIENCE: 5  # Number ofd epochs to wait before reducing LR
         FACTOR: 0.1  # Factor by which LR is reduced (new_lr = old_lr * factor)
@@ -235,15 +277,15 @@ parameters:
     value: 20  # Number of epochs without improvement before stopping training
   SAVE_INTERVAL:
     value: 1000  # Number of training steps between model checkpoints
-  
+
   DATASET_HIGHLIGHT_SUPERVISION_THRESHOLD:
     value: 0.01  # Pixel highlights above this threshold (should be low) are excluded from supervision
 
-  ### LOSS WEIGHTS (relative to the total loss, NOT NORMALIZED LATER)                                                                              
+  ### LOSS WEIGHTS (relative to the total loss, NOT NORMALIZED LATER)
   SPECULAR_LOSS_WEIGHT:
     value: 0.0  # Weight for specular component reconstruction loss
   DIFFUSE_LOSS_WEIGHT:
-    value: 2.0  # Detail recovery: was 1.0. Tilt the loss (and the inpainter's gradient direction, since DETACH=False) toward pixel-space diffuse reconstruction.
+    value: 1  # dulcet-sweep-2 winner (was swept [1,2.0]; 1 won). Pixel-space diffuse reconstruction weight.
   HIGHLIGHT_LOSS_WEIGHT:
     value: 0.0  # Weight for highlight mask regression loss
   TOKEN_INPAINT_LOSS_WEIGHT:
@@ -269,9 +311,12 @@ parameters:
     value: 1.0      # Positive class weight (used only if BALANCE_MODE == 'pos_weight')
   HLREG_FOCAL_GAMMA:
     value: 2.0      # Focal loss gamma parameter (0.0 = standard BCE, 1.0-2.0 helps with gradient vanishing)
-  
+
   WEIGHT_SEAM:
-    value: 0.1  # Detail recovery: was 0.0. Enforce pixel + gradient consistency on the ring around removed highlights (kills blur/halos at the inpaint boundary).
+    # [SWEPT — Problem 1] Pixel + gradient consistency on the ring around removed
+    # highlights — the lever for the "evident patch artefacts" at large-hole
+    # boundaries. 0.1 = current value; 0.3 = stronger boundary enforcement.
+    values: [0.1, 0.3]
   RING_DILATE_KERNEL:
     value: 17  # Dilation kernel size (odd number) for creating ring mask around highlights
   SEAM_USE_CHARB:
@@ -279,11 +324,15 @@ parameters:
   SEAM_WEIGHT_GRAD:
     value: 0.5  # Detail recovery: was 0.0. Match image GRADIENTS across the seam — the only config-available high-frequency term acting on the diffuse output.
   TOKEN_FEAT_ALPHA:
-    value: 0.5  # Mixing factor for token feature loss: alpha * L1 + (1-alpha) * (1-cosine_sim)
+    value: 0.5  # dulcet-sweep-2 winner (was swept [0.25,0.5,0.75]; 0.5 won). alpha*L1 + (1-alpha)*(1-cosine_sim).
 
   ### DIFFUSE HIGHLIGHT PENALTY
   WEIGHT_DIFFUSE_HIGHLIGHT_PENALTY:
-    value: 0.05  # Light brightness penalty; large values bias inpaintings toward dark/violet on red CHOLEC scenes
+    # [SWEPT — Problem 2 residue] Penalizes residual brightness left in the
+    # diffuse output (the "highlights still subtly visible" complaint). 0.05 =
+    # current value; 0.15 = 3x stronger suppression. Higher can bias inpaintings
+    # toward dark/violet on red CHOLEC scenes — that trade-off is what we measure.
+    values: [0.05, 0.15]
   DIFFUSE_HL_THRESHOLD:
     value: 0.85  # Threshold above which diffuse pixels are penalized as residual highlights
   DIFFUSE_HL_USE_CHARB:
@@ -295,11 +344,11 @@ parameters:
   DIFFUSE_HL_USE_LUMINANCE:
     value: False  # If True, use perceptually-weighted luminance (0.299*R + 0.587*G + 0.114*B); if False, use simple mean brightness
 
-  ### LOGGING, RESULTS AND WANDB                                                                 
+  ### LOGGING, RESULTS AND WANDB
   LOG_INTERVAL:
     value: 1  # Number of training steps between console log outputs
   WANDB_LOG_INTERVAL:
-    value: 1  # Number of training steps between WandB metric logs
+    value: 5  # Number of training steps between WandB metric logs
   IMAGE_LOG_INTERVAL:
     value: 5  # Number of training steps between image logging to WandB
   NO_WANDB:
@@ -311,4 +360,33 @@ parameters:
   WANDB_PROJECT:
     value: "UnReflectAnything"  # WandB project name
   NOTES:
-    value: "sharp/saturated highlights: geo-blobs N=24 + INTENSITY[0.8,2.5] + FALLOFF[0,0.5] + DENSITY[0,2]"  # Notes/description for this training run
+    value: ""  # Notes/description for this training run
+
+  ### ================= SWEEP AXES (the only varying parameters) =================
+  # 2 x 2 x 2 = 8 runs. Everything else is fixed at dulcet-sweep-2 values, with
+  # sky suppression ON, PRIOR_FILL_ITERS=8, HIGHLIGHT_DENSITY neutral, and the
+  # validation highlights frozen so the metric is comparable across every run.
+  #
+  # The three swept axes (WEIGHT_SEAM and WEIGHT_DIFFUSE_HIGHLIGHT_PENALTY) are
+  # defined inline in their sections above; HIGHLIGHT_FALLOFF is below.
+
+  # [Problem 2] Sharp highlights: edge-hardness / falloff applied to the
+  # per-image-normalized synthetic highlight, sampled uniformly per image in
+  # [min,max]. [0.0,0.0] = soft Blinn-Phong lobes only (legacy). [0.0,0.6] =
+  # also synthesize small, hard-edged, high-gradient highlights (crops the soft
+  # halo and rescales), so the model learns to remove the type it currently leaves visible.
+  HIGHLIGHT_FALLOFF:
+    values: [[0.0, 0.0], [0.0, 0.6]]
+
+  # [Problem 1] Large-hole interior fill: FIXED at 8 (the eval-invariant winner
+  # from knd3slij). Diffuses the token local-mean prior inward so deep masked
+  # tokens get a content-aware seed instead of collapsing to flat gray.
+  PRIOR_FILL_ITERS:
+    value: 8
+
+  # [Problem 3] Sky suppression: FIXED ON for every run (not an axis). A
+  # conservative blue/flat/upper-region sky mask is removed from the inpaint mask
+  # in the model forward, so the token inpainter never repaints the sky.
+  # Deterministic, blueness-gated (safe on red/indoor/endoscopic scenes).
+  SKY_SUPPRESSION:
+    value: true

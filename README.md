@@ -118,13 +118,12 @@ unreflectanything cite --bibtex
 ```
 or copy it directly from below
 ```
-@misc{rota2025unreflectanything,
-      title={UnReflectAnything: RGB-Only Highlight Removal by Rendering Synthetic Specular Supervision}, 
-      author={Alberto Rota and Mert Kiray and Mert Asim Karaoglu and Patrick Ruhkamp and Elena De Momi and Nassir Navab and Benjamin Busam},
-      year={2025},
-      eprint={2512.09583},
-      archivePrefix={arXiv},
-      primaryClass={cs.CV},
-      url={https://arxiv.org/abs/2512.09583}, 
+@InProceedings{Rota_2026_CVPR,
+    author    = {Rota, Alberto and Kiray, Mert and Karaoglu, Mert Asim and Ruhkamp, Patrick and De Momi, Elena and Navab, Nassir and Busam, Benjamin},
+    title     = {UnReflectAnything: RGB-Only Highlight Removal by Rendering Synthetic Specular Supervision},
+    booktitle = {Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR)},
+    month     = {June},
+    year      = {2026},
+    pages     = {241-250}
 }
 ```

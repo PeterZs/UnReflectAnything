@@ -96,6 +96,130 @@ def apply_highlight_falloff(
 
 
 @torch.no_grad()
+def make_large_highlight_mask(
+    B: int,
+    H: int,
+    W: int,
+    device: torch.device,
+    prob: float = 1.0,
+    n_blobs: int = 1,
+    size_frac: Union[float, Sequence[float]] = (0.12, 0.38),
+    elongation: float = 0.5,
+    core_frac: float = 0.22,
+    peak: Union[float, Sequence[float]] = (0.9, 1.5),
+    edge_wobble: float = 0.25,
+    warp_scale: int = 24,
+    dtype: torch.dtype = torch.float32,
+) -> torch.Tensor:
+    """
+    Generate large highlight blobs with a realistic *domed* intensity profile.
+
+    This synthesizes the large contiguous specular morphology (e.g. a wet surface
+    under strong light) that the smooth scene-wide Blinn-Phong lobe and the small
+    GEOMETRIC_HIGHLIGHTS micro-blobs never produce, so the token inpainter is
+    trained on large holes whose interior has no nearby visible context (the
+    flat-gray-center failure case).
+
+    The blob is NOT a uniform flat-topped plate (which composites to a frame-wide
+    blown-out 255 plateau): it has a small bright core (radius `core_frac` of the
+    blob) that falls off smoothly to 0 at the boundary. The per-blob `peak` may
+    exceed 1.0 so the core genuinely saturates and clips to pure white over a small
+    plateau (real strong glare), while values <1 stay soft — sampling a [min,max]
+    that straddles 1.0 gives a realistic mix. The caller composites it with its OWN
+    alpha (NOT scaled by the Blinn-Phong `intensity`), so brightness stays
+    controlled and a texture gradient survives in the halo.
+
+    Randomness is drawn from the *global* torch RNG (CPU draws for the per-blob
+    scalars, a device randn for the border-warp field), so under
+    `torch.manual_seed` (FREEZE_VAL_HIGHLIGHTS) the blobs are reproducible and the
+    eval metric stays comparable across runs.
+
+    Args:
+        B, H, W: batch size and spatial dims of the highlight map to match.
+        prob: per-sample probability of receiving a large highlight (else zeros).
+        n_blobs: number of blobs per selected sample.
+        size_frac: blob diameter as a fraction of min(H,W); scalar or [min,max]
+                   (sampled uniformly per blob).
+        elongation: 0 = circular, ->1 = increasingly elongated on average.
+        core_frac: fraction of the blob *radius* held at full brightness before the
+                   smooth falloff begins (small -> tight bright core + wide halo).
+        peak: per-blob peak alpha; scalar or [min,max] sampled uniformly. >=1 makes
+              the flat core clip to pure white (a saturated plateau); <1 stays soft.
+        edge_wobble: amplitude of the irregular border perturbation (0..1). Kept
+                     low so the blob stays a single coherent region, not fragments.
+        warp_scale: spatial scale (px) of the border perturbation.
+
+    Returns:
+        [B,1,H,W] float alpha map (>=0; core may exceed 1 to force a clipped white
+        plateau on composite, 0 outside the halo).
+    """
+    out = torch.zeros(B, 1, H, W, device=device, dtype=dtype)
+    if isinstance(size_frac, (list, tuple)):
+        size_lo, size_hi = float(size_frac[0]), float(size_frac[1])
+    else:
+        size_lo = size_hi = float(size_frac)
+    if isinstance(peak, (list, tuple)):
+        peak_lo, peak_hi = float(peak[0]), float(peak[1])
+    else:
+        peak_lo = peak_hi = float(peak)
+    core = min(max(float(core_frac), 0.0), 0.95)
+    nb = max(1, int(n_blobs))
+    min_hw = float(min(H, W))
+
+    # Base pixel grid (built once, reused for every blob).
+    yy, xx = torch.meshgrid(
+        torch.arange(H, device=device, dtype=dtype),
+        torch.arange(W, device=device, dtype=dtype),
+        indexing="ij",
+    )
+
+    # Host-side scalar draws (CPU RNG is seeded by torch.manual_seed during frozen
+    # eval) — one sync instead of one per scalar. Columns: keep, cx, cy, size,
+    # axis-ratio, theta, exponent, peak.
+    keep = torch.rand(B).tolist()
+    rs = torch.rand(B, nb, 7).tolist()
+
+    sc = max(6, int(warp_scale))
+    for b in range(B):
+        if keep[b] > prob:
+            continue
+        # Independent border-warp field per sample (device randn -> CUDA RNG).
+        h0, w0 = max(2, H // sc), max(2, W // sc)
+        warp = F.interpolate(
+            torch.randn(1, 2, h0, w0, device=device, dtype=dtype),
+            size=(H, W), mode="bicubic", align_corners=False,
+        )
+        warp = warp / (warp.std(dim=(-2, -1), keepdim=True) + 1e-8)  # [1,2,H,W]
+
+        mask = torch.zeros(H, W, device=device, dtype=dtype)
+        for j in range(nb):
+            u_cx, u_cy, u_sz, u_ar, u_th, u_p, u_pk = rs[b][j]
+            D = max(8.0, (size_lo + (size_hi - size_lo) * u_sz) * min_hw)
+            cx, cy = u_cx * W, u_cy * H
+            ratio = max(0.25, min(1.0, 1.0 - elongation * u_ar))
+            a = D * 0.5
+            bax = D * 0.5 * ratio
+            theta = u_th * math.pi
+            p = 2.0 + 1.4 * u_p  # super-ellipse exponent in [2.0, 3.4]
+            pk = peak_lo + (peak_hi - peak_lo) * u_pk
+            wob = edge_wobble * 0.35 * D
+            Xc = xx + wob * warp[0, 0] - cx
+            Yc = yy + wob * warp[0, 1] - cy
+            ct, st = math.cos(theta), math.sin(theta)
+            xr = ct * Xc + st * Yc
+            yr = -st * Xc + ct * Yc
+            f = (xr.abs() / (a + 1e-6)).pow(p) + (yr.abs() / (bax + 1e-6)).pow(p)
+            # Normalized radius s in [0,1] (s=1 at the boundary). Domed profile:
+            # flat peak for s<=core, smooth falloff to 0 at s=1.
+            s = f.clamp_min(0.0).pow(1.0 / p)
+            fall = ((1.0 - s) / max(1.0 - core, 1e-6)).clamp(0.0, 1.0)
+            blob = pk * _smoothstep(fall, 0.0, 1.0)
+            mask = torch.maximum(mask, blob)
+        out[b, 0] = mask
+    return out
+
+
+@torch.no_grad()
 def add_geometric_roughness_torch(
     normals: torch.Tensor,  # [B,3,H,W], in [-1,1] or [0,1]
     # --- blob controls ---
@@ -981,7 +1105,16 @@ class HighlightRender(nn.Module):
         surface_roughness=80.0,
         intensity=10.0,
         highlight_falloff=0.0,
-        highlight_concentration=0.0,
+        highlight_density=0.0,
+        # Large contiguous highlight parameters (direct injection into H; see
+        # make_large_highlight_mask). large_highlight_prob=0 disables (default).
+        large_highlight_prob=0.0,
+        large_highlight_count=1,
+        large_highlight_size=(0.12, 0.38),
+        large_highlight_elongation=0.5,
+        large_highlight_core_frac=0.22,
+        large_highlight_peak=(0.7, 1.0),
+        large_highlight_edge_wobble=0.25,
         # Geometric roughness parameters
         n_blobs=0,
         avg_blob_size=0.10,
@@ -1015,7 +1148,7 @@ class HighlightRender(nn.Module):
             surface_roughness: Base Blinn-Phong exponent α (float or [min, max]; if range, sampled log-uniform per sample)
             intensity: Specular strength multiplier (float or [min, max]; if range, sampled uniform per sample)
             highlight_falloff: Edge-hardness crop in [0,1) (float or [min,max]; uniform per sample). 0 = soft lobe.
-            highlight_concentration: Brightness boost (>=0) of the pixels that survive the falloff crop
+            highlight_density: Brightness boost (>=0) of the pixels that survive the falloff crop
                                      (float or [min,max]; uniform per sample). Applies a gamma=1/(1+c) curve
                                      to the rescaled band, pushing survivors toward 1. 0 = no boost.
             # Geometric roughness parameters
@@ -1081,7 +1214,7 @@ class HighlightRender(nn.Module):
         # Concentration / brightness boost of the surviving core: scalar or
         # [min,max] (uniform per-sample). 0 = linear rescale (no boost).
         concentration = _resolve_highlight_param(
-            highlight_concentration, B, device, log_uniform=False
+            highlight_density, B, device, log_uniform=False
         )
 
         # If intensity is scalar zero, skip all highlight and geometry computations (tensor => never skip)
@@ -1115,7 +1248,7 @@ class HighlightRender(nn.Module):
                 "surface_roughness": surface_roughness,
                 "intensity": intensity,
                 "highlight_falloff": falloff,
-                "highlight_concentration": concentration,
+                "highlight_density": concentration,
             }
             if (
                 return_dataset_highlights
@@ -1183,12 +1316,40 @@ class HighlightRender(nn.Module):
             )
         )
 
+        # 3c) Large contiguous highlights (the morphology the smooth Blinn-Phong
+        # lobe never produces). `big` is a domed alpha map; we composite it with its
+        # OWN alpha AFTER the lobe composite (NOT scaled by `intensity`), so its
+        # brightness stays controlled instead of being driven to a blown-out 255
+        # plateau. The highlight map records max(H, big) so the downstream inpaint /
+        # supervision masks cover the whole blob and the token inpainter is trained
+        # to reconstruct large-hole interiors against the clean tokens.
+        big = None
+        if large_highlight_prob and float(large_highlight_prob) > 0.0:
+            big = make_large_highlight_mask(
+                B,
+                H.shape[-2],
+                H.shape[-1],
+                device,
+                prob=float(large_highlight_prob),
+                n_blobs=int(large_highlight_count),
+                size_frac=large_highlight_size,
+                elongation=float(large_highlight_elongation),
+                core_frac=float(large_highlight_core_frac),
+                peak=large_highlight_peak,
+                edge_wobble=float(large_highlight_edge_wobble),
+                dtype=H.dtype,
+            )
+
+        rgb_highlighted = self.update_rgb_with_highlight(rgb, H, intensity=intensity)
+        if big is not None:
+            # "over" composite of a white highlight using the blob's own alpha.
+            rgb_highlighted = (rgb_highlighted * (1.0 - big) + big).clamp(0, 1)
+            H = torch.clamp(torch.maximum(H, big), 0, 1)
+
         # 4) Update scene Stokes parameters with highlight contribution (only if pol provided)
         result = {
             "highlight": H,
-            "rgb_highlighted": self.update_rgb_with_highlight(
-                rgb, H, intensity=intensity
-            ),
+            "rgb_highlighted": rgb_highlighted,
             "stokes_highlight": H_stokes,
             "depth": depth,
             "normals": normals,
@@ -1202,7 +1363,7 @@ class HighlightRender(nn.Module):
             "surface_roughness": surface_roughness,
             "intensity": intensity,
             "highlight_falloff": falloff,
-            "highlight_concentration": concentration,
+            "highlight_density": concentration,
         }
 
         # Dataset Highlights are thresholded here

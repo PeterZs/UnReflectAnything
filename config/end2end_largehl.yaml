@@ -1,20 +1,29 @@
-### EXPERIMENT: SHARP / SATURATED HIGHLIGHT REMOVAL
-### Hypothesis: the model fails on small, concentrated, fully-clipped (255/255/255)
-### specular blobs because the synthetic supervision never contained that
-### morphology — only smooth, scene-wide Blinn-Phong lobes that rarely saturate.
-### This run enables the previously-dormant micro-specular blob generator and
-### pushes the compositing into true saturation. Four coupled changes vs the
-### prior end2end baseline (all in the HIGHLIGHTS section below):
-###   1. GEOMETRIC_HIGHLIGHTS.N_BLOBS 0 -> 24   (perturb normals -> small sharp blobs)
-###   2. INTENSITY        [0.8,1.0] -> [0.8,2.5] (drive a broad core past the a=1 clamp)
-###   3. HIGHLIGHT_FALLOFF  [0,0]   -> [0.0,0.5] (hard, high-gradient edges)
-###   4. HIGHLIGHT_DENSITY  (1.0)   -> [0.0,2.0] (broaden/saturate the surviving core)
+### EXPERIMENT: LARGE-HIGHLIGHT REMOVAL (large-hole inpainting)
+### Hypothesis: the model leaves a flat gray, patch-seamed center when a single
+### LARGE specular region (e.g. wet tissue under strong light) covers a big part
+### of the frame. Two compounding causes, both fixed here:
+###   A. Training distribution: the synthetic supervision only ever produced
+###      small/medium Blinn-Phong lobes + tiny GEOMETRIC_HIGHLIGHTS micro-blobs.
+###      The token inpainter was never trained on holes this big, so it has no
+###      learned prior for their interior. FIX -> LARGE_HIGHLIGHTS: composite a
+###      big, irregular, soft-edged, saturated plateau into the highlight map H
+###      (make_large_highlight_mask). It flows through rgb_highlighted + the
+###      inpaint/supervision masks, so the inpainter is trained to reconstruct
+###      large-hole interiors against the clean tokens.
+###   B. Local-prior seed reach: TokenInpainter_Prior seeds masked tokens by
+###      diffusing a box-mean of visible neighbours inward; reach = iters*(kernel//2)
+###      tokens. At 896px the grid is 56x56, so a centred large hole needs reach
+###      ~28. FIX -> LOCAL_PRIOR_KERNEL 5->9 and PRIOR_FILL_ITERS 1->12 (reach 48),
+###      so deep interior tokens get a content-aware seed instead of collapsing to
+###      ~0 (the flat-gray seed). GEOMETRIC_HIGHLIGHTS (sharp micro-blobs) and the
+###      INTENSITY/FALLOFF/DENSITY saturation knobs are kept from the prior run.
 ### EVAL: FREEZE_VAL_HIGHLIGHTS is intentionally UNSET, so validation mirrors the
-### (now hard) training distribution and the val metric actually reflects this
+### (now large-hole) training distribution and the val PANELS actually show this
 ### failure case. Judge primarily on the logged qualitative panels; the scalar
 ### in-mask SSIM is not comparable to prior soft-lobe-eval runs (see notes in
-### geometric-roughness analysis). To ablate the 4 axes independently, use the
-### sweep harness rather than this single-run config.
+### geometric-roughness analysis). For a comparable frozen large-hole metric,
+### set FREEZE_VAL_HIGHLIGHTS: True and the engine will render VAL_LARGE_HIGHLIGHTS
+### deterministically (the large-blob RNG is torch-seedable, unlike geo-blobs).
 
 parameters:
 
@@ -67,14 +76,16 @@ parameters:
         USE_FINAL_NORM: True  # Enable final LayerNorm before output projection
         USE_LOCAL_PRIOR: True  # Blend local mean prior for masked seeds
         LOCAL_PRIOR_WEIGHT: 0.4
-        LOCAL_PRIOR_KERNEL: 5  # Kernel size for local prior blending (> 1)
-        SEED_NOISE_STD: 0.02  # Standard deviation of noise added to masked seeds during training  
+        LOCAL_PRIOR_KERNEL: 9  # Raised 5->9 for large holes: reach = PRIOR_FILL_ITERS*(KERNEL//2) tokens. With 9 -> 4 tokens/iter.
+        SEED_NOISE_STD: 0.02  # Standard deviation of noise added to masked seeds during training
 
   # FORWARD PASS PARAMETERS
-  INPAINT_MASK_THRESHOLD: 
+  INPAINT_MASK_THRESHOLD:
     value: 0.2  # Threshold for inpaint mask
   INPAINT_MASK_DILATION:
     value: 9 # Dilation kernel size (pixels) for inpaint mask - Must be odd
+  PRIOR_FILL_ITERS:
+    value: 12  # Diffusion iterations of the token local-mean prior. reach = ITERS*(LOCAL_PRIOR_KERNEL//2) = 12*4 = 48 tokens >= 28 (centre of a full-frame hole on the 56x56 grid). Was effectively 1 (default) in the prior end2end -> large-hole centres seeded ~0 -> flat gray.
 
   USE_TORCH_COMPILE:  # Enable PyTorch 2.0 torch.compile for faster training (experimental)
     value: False
@@ -205,7 +216,37 @@ parameters:
       ELONGATION_BIAS: 0.6   # 0=circular, 1=very elongated on average
       ROUGHNESS_STRENGTH: 1.5  # average normal angular deviation (radians) inside blobs
 
-  ### OPTIMIZATION                                                                      
+  ### LARGE CONTIGUOUS HIGHLIGHTS  [Problem A: large-hole inpainting]
+  # Composites a big, irregular, soft-edged, saturated plateau directly into the
+  # highlight map H (make_large_highlight_mask in highlight_render.py). This is
+  # the morphology smooth Blinn-Phong lobes and the small micro-blobs above never
+  # produce, and is exactly the case the inpainter currently fills with flat gray.
+  # PROB=0.0 disables (legacy behaviour). Draws from the global torch RNG.
+  LARGE_HIGHLIGHTS:
+    value:
+      PROB: 0.35          # fraction of TRAINING images that get a large highlight
+      COUNT: 1            # blobs per selected image
+      SIZE: [0.12, 0.38]  # blob diameter as a fraction of min(H,W) (uniform per blob); "large" vs the small lobes but not frame-dominating
+      ELONGATION: 0.5     # 0=circular, ->1 elongated on average
+      CORE_FRAC: 0.22     # fraction of radius held at peak before falloff (small -> tight bright core + wide halo, NOT a frame-wide plate)
+      PEAK: [0.95, 1.6]   # per-blob peak alpha; straddles 1.0 so ~60% CLIP the core to pure-white 255 (real saturated glare) while the rest stay bright-but-soft
+      EDGE_WOBBLE: 0.25   # irregular border amplitude (0..1); low so the blob stays a single coherent region
+
+  # Used ONLY when FREEZE_VAL_HIGHLIGHTS: True (off by default here). Fixed-ish
+  # settings + PROB=1.0 so every val image gets one deterministic large hole -> a
+  # comparable large-hole metric across runs. Harmless when freezing is off (val
+  # uses LARGE_HIGHLIGHTS above, mirroring training).
+  VAL_LARGE_HIGHLIGHTS:
+    value:
+      PROB: 1.0
+      COUNT: 1
+      SIZE: [0.30, 0.30]
+      ELONGATION: 0.4
+      CORE_FRAC: 0.22
+      PEAK: [1.3, 1.3]
+      EDGE_WOBBLE: 0.2
+
+  ### OPTIMIZATION
   LEARNING_RATE:
     value: 1.0e-3  # Base learning rate for optimizer   # DEPRECATED. SETTING LR FOR EACH MODULE ABOVE
   WEIGHT_DECAY:   
@@ -311,4 +352,4 @@ parameters:
   WANDB_PROJECT:
     value: "UnReflectAnything"  # WandB project name
   NOTES:
-    value: "sharp/saturated highlights: geo-blobs N=24 + INTENSITY[0.8,2.5] + FALLOFF[0,0.5] + DENSITY[0,2]"  # Notes/description for this training run
+    value: "large-highlight removal: LARGE_HIGHLIGHTS prob0.35 size[0.12,0.38] domed core-clip peak[0.95,1.6] + prior reach KERNEL9/ITERS12 (=48 tok); keeps geo-blobs N=24 + INTENSITY[0.8,2.5] + FALLOFF[0,0.5] + DENSITY[0,2]"  # Notes/description for this training run

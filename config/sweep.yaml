@@ -95,11 +95,7 @@ parameters:
   USE_TORCH_COMPILE:  # Enable PyTorch 2.0 torch.compile for faster training (experimental)
     value: False
   DISTRIBUTE:
-<<<<<<< HEAD
     value: "singlegpu "
-=======
-    value: "singlegpu"
->>>>>>> feat/large-hole-falloff-sky
 
   ### DATA                                                                      
   DATASETS:
@@ -244,11 +240,7 @@ parameters:
   SPECULAR_LOSS_WEIGHT:
     value: 0.0  # Weight for specular component reconstruction loss
   DIFFUSE_LOSS_WEIGHT:
-<<<<<<< HEAD
-    values: [1,2.0]  # Detail recovery: was 1.0. Tilt the loss (and the inpainter's gradient direction, since DETACH=False) toward pixel-space diffuse reconstruction.
-=======
     value: 1  # dulcet-sweep-2 winner (was swept [1,2.0]; 1 won). Pixel-space diffuse reconstruction weight.
->>>>>>> feat/large-hole-falloff-sky
   HIGHLIGHT_LOSS_WEIGHT:
     value: 0.0  # Weight for highlight mask regression loss
   TOKEN_INPAINT_LOSS_WEIGHT:
@@ -284,11 +276,7 @@ parameters:
   SEAM_WEIGHT_GRAD:
     value: 0.5  # Detail recovery: was 0.0. Match image GRADIENTS across the seam — the only config-available high-frequency term acting on the diffuse output.
   TOKEN_FEAT_ALPHA:
-<<<<<<< HEAD
-    values: [0.25,0.5,0.75]  # Mixing factor for token feature loss: alpha * L1 + (1-alpha) * (1-cosine_sim)
-=======
     value: 0.5  # dulcet-sweep-2 winner (was swept [0.25,0.5,0.75]; 0.5 won). alpha*L1 + (1-alpha)*(1-cosine_sim).
->>>>>>> feat/large-hole-falloff-sky
 
   ### DIFFUSE HIGHLIGHT PENALTY
   WEIGHT_DIFFUSE_HIGHLIGHT_PENALTY:
@@ -320,9 +308,6 @@ parameters:
   WANDB_PROJECT:
     value: "UnReflectAnything"  # WandB project name
   NOTES:
-<<<<<<< HEAD
-    value: ""  # Notes/description for this training run
-=======
     value: ""  # Notes/description for this training run
 
   ### ================= SWEEP AXES (the only varying parameters) =================
@@ -343,11 +328,12 @@ parameters:
   # halo and rescales), so the model learns to remove the type it currently leaves visible.
   HIGHLIGHT_FALLOFF:
     values: [[0.0, 0.0], [0.0, 0.6]]
+  HIGHLIGHT_DENSITY:
+    values: [1, [1.0,2.0]]
 
   # [Problem 3] Sky: when true, a conservative blue/flat/upper-region sky mask is
   # removed from the inpaint mask in the model forward, so the token inpainter
   # never repaints the sky. Deterministic (no extra params trained); safe on red/
   # indoor/endoscopic scenes (blueness-gated). Read by create_model_from_config.
   SKY_SUPPRESSION:
-    values: [false, true]
->>>>>>> feat/large-hole-falloff-sky
+    value: true
